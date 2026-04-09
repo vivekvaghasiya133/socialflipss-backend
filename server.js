@@ -8,6 +8,8 @@ const clientRoutes = require("./routes/clients");
 const seedAdmin = require("./middleware/seedAdmin");
 
 const app = express();
+console.log("🚀 Server file loaded");
+console.log("ENV CHECK:", process.env.MONGO_URI ? "OK" : "MISSING");
 
 // Middleware
 
