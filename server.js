@@ -3,10 +3,16 @@ const mongoose = require("mongoose");
 const cors = require("cors");
 require("dotenv").config();
 
-const authRoutes = require("./routes/auth");
-const clientRoutes = require("./routes/clients");
-const seedAdmin = require("./middleware/seedAdmin");
+console.log("STEP 1");
 
+const authRoutes = require("./routes/auth");
+console.log("STEP 2");
+
+const clientRoutes = require("./routes/clients");
+console.log("STEP 3");
+
+const seedAdmin = require("./middleware/seedAdmin");
+console.log("STEP 4");
 const app = express();
 console.log("🚀 Server file loaded");
 console.log("ENV CHECK:", process.env.MONGO_URI ? "OK" : "MISSING");
