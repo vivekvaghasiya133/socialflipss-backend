@@ -1,6 +1,6 @@
 const express = require("express");
 const Staff   = require("../models/Staff");
-const protect = require("../middleware/auth");
+const {protect} = require("../middleware/auth");
 const router  = express.Router();
 
 router.use(protect);

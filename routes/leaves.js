@@ -1,7 +1,7 @@
 const express = require("express");
 const Leave   = require("../models/Leave");
 const Staff   = require("../models/Staff");
-const protect = require("../middleware/auth");
+const {protect} = require("../middleware/auth");
 const { sendLeaveAppliedToAdmin, sendLeaveStatusToStaff } = require("../utils/mailer");
 
 const router = express.Router();
