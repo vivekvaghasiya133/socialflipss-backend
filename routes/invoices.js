@@ -17,7 +17,7 @@ async function generateInvoiceNumber() {
 }
 
 // GET /api/invoices/stats — revenue overview
-router.get("/stats", async (req, res) => {
+router.get("/stats", authorize("admin"), async (req, res) => {
   try {
     const all = await Invoice.find();
 
