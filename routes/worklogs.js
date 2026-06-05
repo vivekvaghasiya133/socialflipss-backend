@@ -82,9 +82,14 @@ router.get("/stats", async (req, res) => {
 // POST /api/worklogs
 router.post("/", async (req, res) => {
   try {
+    const data = { ...req.body };
+    if (data.items && data.items.length > 0) {
+      data.videosCreated = data.items.reduce((sum, item) => sum + Number(item.videosCreated || 0), 0);
+      data.videosEdited  = data.items.reduce((sum, item) => sum + Number(item.videosEdited || 0), 0);
+    }
     const log = await WorkLog.create({
-      ...req.body,
-      userId:  req.body.userId || req.user._id,
+      ...data,
+      userId:  data.userId || req.user._id,
       addedBy: req.user._id,
     });
     const populated = await log.populate(["userId","clientId","projectId"]);

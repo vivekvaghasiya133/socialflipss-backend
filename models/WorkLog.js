@@ -21,6 +21,14 @@ const workLogSchema = new mongoose.Schema(
     postsDesigned:  { type: Number, default: 0 },
     hoursWorked:    { type: Number, default: 0 },
 
+    items: [
+      {
+        name: { type: String, required: true },
+        videosCreated: { type: Number, default: 0 },
+        videosEdited: { type: Number, default: 0 },
+      }
+    ],
+
     // Link to content item if applicable
     contentId: { type: mongoose.Schema.Types.ObjectId, ref: "Content", default: null },
 
@@ -28,6 +36,14 @@ const workLogSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+workLogSchema.pre("save", function (next) {
+  if (this.items && this.items.length > 0) {
+    this.videosCreated = this.items.reduce((sum, item) => sum + (item.videosCreated || 0), 0);
+    this.videosEdited  = this.items.reduce((sum, item) => sum + (item.videosEdited || 0), 0);
+  }
+  next();
+});
 
 // One log per user per date per workType (upsert friendly)
 workLogSchema.index({ userId: 1, date: 1, workType: 1 });
