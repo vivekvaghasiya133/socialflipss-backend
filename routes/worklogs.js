@@ -1,5 +1,7 @@
 const express  = require("express");
+const mongoose = require("mongoose");
 const WorkLog  = require("../models/WorkLog");
+const User     = require("../models/User");
 const { protect } = require("../middleware/auth");
 
 const router = express.Router();
@@ -8,7 +10,7 @@ router.use(protect);
 // GET /api/worklogs?userId=&date=&month=YYYY-MM
 router.get("/", async (req, res) => {
   try {
-    const { userId, date, month, clientId, projectId } = req.query;
+    const { userId, date, month, clientId, projectId, email } = req.query;
     const filter = {};
     if (date)      filter.date      = date;
     if (month)     filter.date      = { $regex: `^${month}` };
@@ -16,8 +18,15 @@ router.get("/", async (req, res) => {
     if (projectId) filter.projectId = projectId;
 
     // Team sees only their own logs
-    if (req.user.role === "team") filter.userId = req.user._id;
-    else if (userId) filter.userId = userId;
+    if (req.user.role === "team") {
+      filter.userId = req.user._id;
+    } else if (email) {
+      const u = await User.findOne({ email: email.toLowerCase() });
+      if (u) filter.userId = u._id;
+      else filter.userId = new mongoose.Types.ObjectId(); // force empty if email not found
+    } else if (userId) {
+      filter.userId = userId;
+    }
 
     const logs = await WorkLog.find(filter)
       .populate("userId",    "name role")
@@ -34,15 +43,25 @@ router.get("/", async (req, res) => {
 // GET /api/worklogs/stats?month=YYYY-MM
 router.get("/stats", async (req, res) => {
   try {
-    const { month } = req.query;
+    const { month, userId, email } = req.query;
     const filter = month ? { date: { $regex: `^${month}` } } : {};
-    if (req.user.role === "team") filter.userId = req.user._id;
+    
+    if (req.user.role === "team") {
+      filter.userId = req.user._id;
+    } else if (email) {
+      const u = await User.findOne({ email: email.toLowerCase() });
+      if (u) filter.userId = u._id;
+      else filter.userId = new mongoose.Types.ObjectId();
+    } else if (userId) {
+      filter.userId = userId;
+    }
 
     const logs = await WorkLog.find(filter);
 
-    const totalVideos = logs.reduce((s, l) => s + (l.videosCreated || 0), 0);
-    const totalPosts  = logs.reduce((s, l) => s + (l.postsDesigned || 0), 0);
-    const totalHours  = logs.reduce((s, l) => s + (l.hoursWorked  || 0), 0);
+    const totalVideos       = logs.reduce((s, l) => s + (l.videosCreated || 0), 0);
+    const totalVideosEdited = logs.reduce((s, l) => s + (l.videosEdited || 0), 0);
+    const totalPosts        = logs.reduce((s, l) => s + (l.postsDesigned || 0), 0);
+    const totalHours        = logs.reduce((s, l) => s + (l.hoursWorked  || 0), 0);
 
     // By work type
     const byType = {};
@@ -51,10 +70,10 @@ router.get("/stats", async (req, res) => {
     // By user
     const byUser = await WorkLog.aggregate([
       { $match: filter },
-      { $group: { _id:"$userId", videos:{ $sum:"$videosCreated" }, posts:{ $sum:"$postsDesigned" }, hours:{ $sum:"$hoursWorked" }, logs:{ $sum:1 } } },
+      { $group: { _id:"$userId", videos:{ $sum:"$videosCreated" }, videosEdited:{ $sum:"$videosEdited" }, posts:{ $sum:"$postsDesigned" }, hours:{ $sum:"$hoursWorked" }, logs:{ $sum:1 } } },
     ]);
 
-    res.json({ totalVideos, totalPosts, totalHours, byType, byUser, totalLogs: logs.length });
+    res.json({ totalVideos, totalVideosEdited, totalPosts, totalHours, byType, byUser, totalLogs: logs.length });
   } catch (err) {
     res.status(500).json({ message: "Server error" });
   }

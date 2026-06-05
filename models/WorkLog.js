@@ -17,6 +17,7 @@ const workLogSchema = new mongoose.Schema(
 
     // Output count
     videosCreated:  { type: Number, default: 0 },
+    videosEdited:   { type: Number, default: 0 },
     postsDesigned:  { type: Number, default: 0 },
     hoursWorked:    { type: Number, default: 0 },
 
