@@ -13,6 +13,8 @@ const paymentSchema = new mongoose.Schema({
   method:    { type: String, enum: ["cash","upi","bank","cheque","other"], default: "upi" },
   note:      { type: String, default: "" },
   addedBy:   { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  collectedBy: { type: String, default: "vivek" },
+  collectedByCustom: { type: String, default: "" },
 }, { _id: true });
 
 const invoiceSchema = new mongoose.Schema(
@@ -20,7 +22,14 @@ const invoiceSchema = new mongoose.Schema(
     // Invoice number — auto generated
     invoiceNumber: { type: String, required: true, unique: true },
 
-    clientId: { type: mongoose.Schema.Types.ObjectId, ref: "Client", required: true },
+    clientId: { type: mongoose.Schema.Types.ObjectId, ref: "Client", required: false, default: null },
+
+    // Manual / One-off client details (if clientId is null)
+    clientName:     { type: String, default: "" },
+    clientBusiness: { type: String, default: "" },
+    clientMobile:   { type: String, default: "" },
+    clientEmail:    { type: String, default: "" },
+    clientCity:     { type: String, default: "" },
 
     // Invoice period
     month:     { type: String, default: "" },          // "April 2026"

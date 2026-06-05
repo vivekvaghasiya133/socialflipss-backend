@@ -23,6 +23,7 @@ const portalAuthRoutes    = require("./routes/portalAuth");
 const portalDataRoutes    = require("./routes/portalData");
 const autoInvoiceRoutes   = require("./routes/autoInvoice");
 const notificationRoutes  = require("./routes/notifications");
+const hisabRoutes         = require("./routes/hisab");
 
 const seedAdmin = require("./middleware/seedAdmin");
 
@@ -66,6 +67,7 @@ app.use("/api/portal/auth",    portalAuthRoutes);   // client login/OTP
 app.use("/api/portal",         portalDataRoutes);   // client portal data
 app.use("/api/auto-invoice",   autoInvoiceRoutes);  // auto invoice + reminders
 app.use("/api/notifications",  notificationRoutes); // admin notifications
+app.use("/api/hisab",          hisabRoutes);
 
 app.get("/api/health", (req, res) =>
   res.json({ status:"SocialFlipss API ✓", version:"3.0.0", timestamp: new Date() })

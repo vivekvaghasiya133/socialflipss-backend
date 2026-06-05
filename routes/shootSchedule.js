@@ -227,6 +227,7 @@ function generateSchedule({
   endDate,
   workDays = [1,2,3,4,5,6],
   minReelsPerShoot = 3,
+  occupiedSlots = {},
 }) {
 
   const start = new Date(startDate + "T00:00:00");
@@ -269,65 +270,93 @@ function generateSchedule({
     throw new Error("No valid working days found");
   }
 
-  const slots = [];
-
+  // Pre-calculate shoot counts
+  const shoots = [];
   let remaining = totalReels;
-
-  let dayIndex = 0;
-
-  // ───────────────────────────────────────────────────────────
-  // MAIN LOGIC
-  // Example:
-  // 10 reels => 3 + 3 + 3 + 1
-  // ───────────────────────────────────────────────────────────
-  while (remaining > 0 && dayIndex < validDays.length) {
-
-    const date = validDays[dayIndex];
-
-    // reels for today
-    const reelsToday = Math.min(
-      minReelsPerShoot,
-      remaining
-    );
-
+  while (remaining > 0) {
+    const reelsToday = Math.min(minReelsPerShoot, remaining);
+    shoots.push({ reelCount: reelsToday });
     remaining -= reelsToday;
-
-    // ONLY ONE SLOT FOR CLIENT
-    slots.push({
-
-      date,
-
-      timeSlot: "morning",
-
-      time: SLOT_TIMES.morning,
-
-      reelCount: reelsToday,
-
-      status: "scheduled",
-
-      note: "",
-
-      whatsappSent: false,
-
-    });
-
-    dayIndex++;
-
   }
 
-  // ───────────────────────────────────────────────────────────
-  // IF REELS STILL REMAIN
-  // ───────────────────────────────────────────────────────────
-  if (remaining > 0) {
+  const slots = [];
+  const chosenDates = new Set();
 
-    const lastSlot = slots[slots.length - 1];
+  for (const shoot of shoots) {
+    let assigned = false;
 
-    if (lastSlot) {
+    // First Pass: Find a valid day with a completely free slot
+    for (const date of validDays) {
+      if (chosenDates.has(date)) continue;
 
-      lastSlot.reelCount += remaining;
+      const occupied = occupiedSlots[date] || [];
+      let freeSlot = null;
+      for (const ts of ["morning", "afternoon", "evening"]) {
+        if (!occupied.includes(ts)) {
+          freeSlot = ts;
+          break;
+        }
+      }
 
+      if (freeSlot) {
+        slots.push({
+          date,
+          timeSlot: freeSlot,
+          time: SLOT_TIMES[freeSlot],
+          reelCount: shoot.reelCount,
+          status: "scheduled",
+          note: "",
+          whatsappSent: false,
+        });
+        chosenDates.add(date);
+        assigned = true;
+        break;
+      }
     }
 
+    // Second Pass: If all slots on all days are occupied, allow overlap but prioritize a new day for this client
+    if (!assigned) {
+      for (const date of validDays) {
+        if (chosenDates.has(date)) continue;
+
+        slots.push({
+          date,
+          timeSlot: "morning",
+          time: SLOT_TIMES.morning,
+          reelCount: shoot.reelCount,
+          status: "scheduled",
+          note: "",
+          whatsappSent: false,
+        });
+        chosenDates.add(date);
+        assigned = true;
+        break;
+      }
+    }
+
+    // Third Pass: If there are more shoots than valid days, reuse days for this client
+    if (!assigned) {
+      const fallbackDate = validDays[slots.length % validDays.length];
+      const occupied = occupiedSlots[fallbackDate] || [];
+      let freeSlot = null;
+      for (const ts of ["morning", "afternoon", "evening"]) {
+        if (!occupied.includes(ts)) {
+          freeSlot = ts;
+          break;
+        }
+      }
+      if (!freeSlot) freeSlot = "morning";
+
+      slots.push({
+        date: fallbackDate,
+        timeSlot: freeSlot,
+        time: SLOT_TIMES[freeSlot],
+        reelCount: shoot.reelCount,
+        status: "scheduled",
+        note: "",
+        whatsappSent: false,
+      });
+    }
   }
 
   return slots.sort(
@@ -428,6 +457,28 @@ router.post(
 
       }
 
+      // Fetch all existing schedules except the current one
+      const existingSchedules = await ShootSchedule.find({
+        projectId: { $ne: projectId }
+      });
+
+      // Build occupiedSlots map: date -> array of timeSlots
+      const occupiedSlots = {};
+      for (const schedule of existingSchedules) {
+        if (schedule.slots) {
+          for (const slot of schedule.slots) {
+            if (slot.status !== "cancelled") {
+              if (!occupiedSlots[slot.date]) {
+                occupiedSlots[slot.date] = [];
+              }
+              if (!occupiedSlots[slot.date].includes(slot.timeSlot)) {
+                occupiedSlots[slot.date].push(slot.timeSlot);
+              }
+            }
+          }
+        }
+      }
+
       const finalSlots = generateSchedule({
 
         totalReels,
@@ -439,6 +490,8 @@ router.post(
         workDays: workDays || [1,2,3,4,5,6],
 
         minReelsPerShoot: minReelsPerShoot || 3,
+
+        occupiedSlots,
 
       });
 

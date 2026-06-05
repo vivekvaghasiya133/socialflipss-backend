@@ -100,17 +100,20 @@ router.get("/all", authorize("admin","manager"), async (req, res) => {
 // POST /api/auto-invoice/setup
 router.post("/setup", authorize("admin","manager"), async (req, res) => {
   try {
-    const { clientId, packageAmount, packageName, gstPercent, extraItems, notes, reminders, enabled } = req.body;
+    const { clientId, packageAmount, packageName, gstPercent, extraItems, notes, reminders, enabled, dayOfMonth } = req.body;
     const client = await Client.findById(clientId);
     if (!client) return res.status(404).json({ message:"Client not found" });
 
-    // dayOfMonth from onboarding date — 1 April → day 1
-    const onboardDate = new Date(client.onboardingDate || client.createdAt);
-    const dayOfMonth  = onboardDate.getDate();
+    // Determine final dayOfMonth (use custom if valid, else default to onboarding date)
+    let finalDay = Number(dayOfMonth);
+    if (!finalDay || finalDay < 1 || finalDay > 31) {
+      const onboardDate = new Date(client.onboardingDate || client.createdAt);
+      finalDay = onboardDate.getDate();
+    }
 
     const config = await AutoInvoiceConfig.findOneAndUpdate(
       { clientId },
-      { clientId, dayOfMonth, packageAmount:Number(packageAmount)||0, packageName:packageName||"Monthly Service",
+      { clientId, dayOfMonth: finalDay, packageAmount:Number(packageAmount)||0, packageName:packageName||"Monthly Service",
         gstPercent:Number(gstPercent)||0, extraItems:extraItems||[], notes:notes||"",
         reminders:reminders||{ day5:true, day10:true, day15:true },
         enabled: enabled !== undefined ? enabled : true, createdBy:req.user._id },
@@ -120,8 +123,8 @@ router.post("/setup", authorize("admin","manager"), async (req, res) => {
     res.json({
       message:    "Auto invoice configured!",
       config,
-      dayOfMonth,
-      note: `Invoice will auto-generate on day ${dayOfMonth} of every month`,
+      dayOfMonth: finalDay,
+      note: `Invoice will auto-generate on day ${finalDay} of every month`,
     });
   } catch (err) { res.status(400).json({ message:err.message }); }
 });

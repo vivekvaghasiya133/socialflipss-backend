@@ -131,10 +131,64 @@ async function sendShootReminderEmail({ email, clientName, date, timeSlot, reelC
   });
 }
 
+// ── Leave Applied (Admin notification) ──────────────────────────────
+async function sendLeaveAppliedToAdmin({ staffName, staffPosition, fromDate, toDate, leaveType, reason }) {
+  try {
+    await transporter.sendMail({
+      from:    `"${BRAND.name}" <${process.env.GMAIL_USER}>`,
+      to:      process.env.ADMIN_EMAIL || "admin@socialflipss.com",
+      subject: `📋 New Leave Request Applied — ${staffName}`,
+      html:    baseTemplate(`
+        <p style="font-size:15px;color:#111;">Hello Admin,</p>
+        <p style="color:#374151;margin:12px 0;">A new leave request has been submitted by <strong>${staffName}</strong>:</p>
+        <div style="background:#f9fafb;border-radius:10px;padding:20px;margin:20px 0;">
+          <table style="width:100%;font-size:14px;border-collapse:collapse;">
+            <tr><td style="color:#6b7280;padding:6px 0;width:120px;">Staff</td><td style="font-weight:600;text-align:right;">${staffName} (${staffPosition})</td></tr>
+            <tr><td style="color:#6b7280;padding:6px 0;">From Date</td><td style="text-align:right;">${fromDate}</td></tr>
+            <tr><td style="color:#6b7280;padding:6px 0;">To Date</td><td style="text-align:right;">${toDate}</td></tr>
+            <tr><td style="color:#6b7280;padding:6px 0;">Leave Type</td><td style="text-align:right;">${leaveType === "half_day" ? "Half Day" : "Full Day"}</td></tr>
+            <tr><td style="color:#6b7280;padding:6px 0;">Reason</td><td style="font-weight:600;text-align:right;">${reason}</td></tr>
+          </table>
+        </div>`),
+    });
+  } catch (err) {
+    console.error("Mail sendLeaveAppliedToAdmin error:", err.message);
+  }
+}
+
+// ── Leave Status Update (Staff notification) ─────────────────────────
+async function sendLeaveStatusToStaff({ staffEmail, staffName, status, fromDate, toDate, adminNote }) {
+  try {
+    const approved = status === "approved";
+    const emoji    = approved ? "✅" : "❌";
+    const statusLabel = approved ? "Approved" : "Rejected";
+    const color    = approved ? "#0e9f6e" : "#e02424";
+
+    await transporter.sendMail({
+      from:    `"${BRAND.name}" <${process.env.GMAIL_USER}>`,
+      to:      staffEmail,
+      subject: `${emoji} Leave Request ${statusLabel} — ${fromDate}`,
+      html:    baseTemplate(`
+        <p style="font-size:15px;color:#111;">Hi <strong>${staffName}</strong>,</p>
+        <p style="color:#374151;margin:12px 0;">Your leave request status has been updated:</p>
+        <div style="background:${color}08;border-left:4px solid ${color};border-radius:0 8px 8px 0;padding:14px 18px;margin:20px 0;">
+          <p style="margin:0;font-weight:700;color:${color};font-size:16px;">${emoji} ${statusLabel}</p>
+          <p style="margin:8px 0 0;color:#374151;font-size:14px;"><strong>From Date:</strong> ${fromDate}</p>
+          <p style="margin:4px 0 0;color:#374151;font-size:14px;"><strong>To Date:</strong> ${toDate}</p>
+          ${adminNote ? `<p style="margin:8px 0 0;color:#374151;font-size:14px;"><strong>Admin Note:</strong> ${adminNote}</p>` : ""}
+        </div>`),
+    });
+  } catch (err) {
+    console.error("Mail sendLeaveStatusToStaff error:", err.message);
+  }
+}
+
 module.exports = {
   sendOTPEmail,
   sendContentApprovalEmail,
   sendInvoiceEmail,
   sendPaymentReminderEmail,
   sendShootReminderEmail,
+  sendLeaveAppliedToAdmin,
+  sendLeaveStatusToStaff,
 };

@@ -83,7 +83,8 @@ router.get("/:id", async (req, res) => {
 router.post("/", authorize("admin", "manager"), async (req, res) => {
   try {
     const invoiceNumber = await generateInvoiceNumber();
-    const { items = [], discount = 0, gstPercent = 0 } = req.body;
+    let { clientId, items = [], discount = 0, gstPercent = 0 } = req.body;
+    if (!clientId) clientId = null;
 
     // Calculate amounts
     const subtotal  = items.reduce((s, i) => s + (i.quantity * i.rate), 0);
@@ -97,6 +98,7 @@ router.post("/", authorize("admin", "manager"), async (req, res) => {
 
     const invoice = await Invoice.create({
       ...req.body,
+      clientId,
       invoiceNumber,
       items:       processedItems,
       subtotal,
@@ -126,7 +128,7 @@ router.put("/:id", authorize("admin", "manager"), async (req, res) => {
 // POST /api/invoices/:id/payment — record a payment
 router.post("/:id/payment", authorize("admin", "manager"), async (req, res) => {
   try {
-    const { amount, method, note, date } = req.body;
+    const { amount, method, note, date, collectedBy, collectedByCustom } = req.body;
     const invoice = await Invoice.findById(req.params.id);
     if (!invoice) return res.status(404).json({ message: "Invoice not found" });
 
@@ -135,7 +137,15 @@ router.post("/:id/payment", authorize("admin", "manager"), async (req, res) => {
     if (invoice.paidAmount + payAmount > invoice.totalAmount)
       return res.status(400).json({ message: `Max payable: ₹${invoice.pendingAmount}` });
 
-    invoice.payments.push({ amount: payAmount, method, note: note||"", date: date||new Date(), addedBy: req.user._id });
+    invoice.payments.push({
+      amount: payAmount,
+      method,
+      note: note||"",
+      date: date||new Date(),
+      addedBy: req.user._id,
+      collectedBy: collectedBy || "vivek",
+      collectedByCustom: collectedByCustom || ""
+    });
     invoice.paidAmount = parseFloat((invoice.paidAmount + payAmount).toFixed(2));
     await invoice.save(); // pre-save hook updates pendingAmount + paymentStatus
 

@@ -47,6 +47,7 @@ router.post("/onboard/:clientId", async (req, res) => {
 
     // Mark onboarding done
     updateData.status = "active";
+    updateData.onboardingDate = new Date();
 
     await Client.findByIdAndUpdate(req.params.clientId, updateData);
     res.json({ message:"Onboarding complete! SocialFlipss team soon contact karshhe. 🙌" });

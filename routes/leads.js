@@ -5,6 +5,25 @@ const User    = require("../models/User");
 const { protect, authorize } = require("../middleware/auth");
 
 const router = express.Router();
+
+// POST /api/leads/submit — public lead submission (no auth required)
+router.post("/submit", async (req, res) => {
+  try {
+    const data = { ...req.body };
+    data.status = "new";
+    if (!data.source) {
+      data.source = "other";
+    }
+    const lead = await Lead.create(data);
+    res.status(201).json({
+      message: "Lead submitted successfully!",
+      lead,
+    });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
 router.use(protect);
 
 // GET /api/leads/stats
