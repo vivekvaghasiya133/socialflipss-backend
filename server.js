@@ -32,7 +32,9 @@ const app = express();
 const allowedOrigins = [
   "http://localhost:3000",
   "http://localhost:3001",
-  "https://socialflipsswork.vercel.app"
+  "https://socialflipsswork.vercel.app",
+  "https://www.socialflipss.com",
+  "https://socialflipss.com"
 ];
 
 app.use(cors({
