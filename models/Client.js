@@ -26,6 +26,7 @@ const clientSchema = new mongoose.Schema(
     instagramPage: { type: String, trim: true },
 
     // ── Onboarding Form Data ─────────────────────────────────────
+    clientOverview:   { type: String, default: "" },
     description:      { type: String, default: "" },
     targetAudience:   { type: String, default: "" },
     services:         { type: String, default: "" },
@@ -36,6 +37,8 @@ const clientSchema = new mongoose.Schema(
     contentTypes:     [{ type: String }],
     platforms:        [{ type: String }],
     goal:             { type: String, default: "" },
+    mainOffer:        { type: String, default: "" },
+    contentPillars:   { type: String, default: "" },
     inspirationLink:  { type: String, default: "" },
     referral:         { type: String, default: "" },
     notes:            { type: String, default: "" },
@@ -46,8 +49,14 @@ const clientSchema = new mongoose.Schema(
     // ── Status ───────────────────────────────────────────────────
     status: {
       type: String,
-      enum: ["onboarding", "active", "paused", "churned"],
+      enum: ["onboarding", "active", "paused", "renewal", "churned"],
       default: "onboarding",
+    },
+
+    clientGoal: {
+      type: String,
+      enum: ["Authority", "Sales", "Hybrid"],
+      default: "Authority",
     },
 
     // ── Converted from lead ──────────────────────────────────────
@@ -59,6 +68,7 @@ const clientSchema = new mongoose.Schema(
     internalNotes: { type: String, default: "" },
 
     onboardingDate: { type: Date, default: Date.now },
+    renewalDate:    { type: Date, default: null },
   },
   { timestamps: true }
 );

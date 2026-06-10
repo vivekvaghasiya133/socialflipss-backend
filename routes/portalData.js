@@ -19,7 +19,7 @@ router.get("/dashboard", async (req, res) => {
     const [totalContent, postedContent, pendingApproval, invoices, unreadNotifs] = await Promise.all([
       Content.countDocuments({ clientId: cid }),
       Content.countDocuments({ clientId: cid, stage: "posted" }),
-      Content.countDocuments({ clientId: cid, clientApproved: false, stage: { $in:["approved","editing"] } }),
+      Content.countDocuments({ clientId: cid, clientApproved: false, stage: "client_approval" }),
       Invoice.find({ clientId: cid }).select("totalAmount paidAmount pendingAmount paymentStatus month createdAt").sort({ createdAt:-1 }).limit(3),
       Notification.countDocuments({ recipientId: cid, read: false }),
     ]);
@@ -77,6 +77,7 @@ router.put("/content/:id/approve", async (req, res) => {
     if (!content) return res.status(404).json({ message: "Content not found" });
 
     content.clientApproved = status === "approved";
+    content.clientApprovalStatus = status;
     content.approvalNote   = comment || "";
     if (status !== "approved") content.stage = "idea"; // push back to idea if rejected/changes
     if (comment) content.comments.push({ text: `[Client] ${comment}`, addedBy: null });

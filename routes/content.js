@@ -13,12 +13,14 @@ router.get("/stats", async (req, res) => {
     if (projectId) filter.projectId = projectId;
     if (clientId)  filter.clientId  = clientId;
 
-    const [total, idea, approved, shooting, editing, posted] = await Promise.all([
+    const [total, idea, script, shoot, edit, qc, clientApproval, posted] = await Promise.all([
       Content.countDocuments(filter),
       Content.countDocuments({ ...filter, stage:"idea" }),
-      Content.countDocuments({ ...filter, stage:"approved" }),
-      Content.countDocuments({ ...filter, stage:"shooting" }),
-      Content.countDocuments({ ...filter, stage:"editing" }),
+      Content.countDocuments({ ...filter, stage:"script" }),
+      Content.countDocuments({ ...filter, stage:"shoot" }),
+      Content.countDocuments({ ...filter, stage:"edit" }),
+      Content.countDocuments({ ...filter, stage:"qc" }),
+      Content.countDocuments({ ...filter, stage:"client_approval" }),
       Content.countDocuments({ ...filter, stage:"posted" }),
     ]);
 
@@ -29,7 +31,7 @@ router.get("/stats", async (req, res) => {
       { $sort:  { count:-1 } },
     ]);
 
-    res.json({ total, idea, approved, shooting, editing, posted, byType });
+    res.json({ total, idea, script, shoot, edit, qc, clientApproval, posted, byType });
   } catch (err) {
     res.status(500).json({ message: "Server error" });
   }

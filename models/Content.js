@@ -21,11 +21,16 @@ const contentSchema = new mongoose.Schema(
     },
     description: { type: String, default: "" },  // Caption / concept idea
     platform:    { type: String, default: "instagram" },
+    reelGoal:    {
+      type: String,
+      enum: ["Authority", "Trust", "Sales", "Awareness"],
+      default: "Authority",
+    },
 
     // Pipeline stage
     stage: {
       type: String,
-      enum: ["idea", "approved", "shooting", "editing", "posted"],
+      enum: ["idea", "script", "shoot", "edit", "qc", "client_approval", "posted", "approved", "shooting", "editing"],
       default: "idea",
     },
 
@@ -44,6 +49,7 @@ const contentSchema = new mongoose.Schema(
 
     // Approval
     clientApproved: { type: Boolean, default: false },
+    clientApprovalStatus: { type: String, enum: ["pending", "approved", "rejected", "changes_requested"], default: "pending" },
     approvalNote:   { type: String,  default: "" },
 
     // Comments / notes

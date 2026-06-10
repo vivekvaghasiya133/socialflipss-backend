@@ -24,6 +24,9 @@ const portalDataRoutes    = require("./routes/portalData");
 const autoInvoiceRoutes   = require("./routes/autoInvoice");
 const notificationRoutes  = require("./routes/notifications");
 const hisabRoutes         = require("./routes/hisab");
+const strategyRoutes      = require("./routes/strategies");
+const contentAnalyticsRoutes = require("./routes/contentAnalytics");
+const runStagesMigration   = require("./utils/migration");
 
 const seedAdmin = require("./middleware/seedAdmin");
 
@@ -70,6 +73,8 @@ app.use("/api/portal",         portalDataRoutes);   // client portal data
 app.use("/api/auto-invoice",   autoInvoiceRoutes);  // auto invoice + reminders
 app.use("/api/notifications",  notificationRoutes); // admin notifications
 app.use("/api/hisab",          hisabRoutes);
+app.use("/api/strategies",        strategyRoutes);
+app.use("/api/content-analytics", contentAnalyticsRoutes);
 
 app.get("/api/health", (req, res) =>
   res.json({ status:"SocialFlipss API ✓", version:"3.0.0", timestamp: new Date() })
@@ -80,6 +85,7 @@ mongoose
   .then(async () => {
     console.log("✓ MongoDB connected");
     await seedAdmin();
+    await runStagesMigration();
     app.listen(process.env.PORT || 5000, () =>
       console.log(`✓ Server on port ${process.env.PORT || 5000}`)
     );
