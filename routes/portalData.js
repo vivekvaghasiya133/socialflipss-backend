@@ -17,9 +17,9 @@ router.get("/dashboard", async (req, res) => {
   try {
     const cid = clientId(req);
     const [totalContent, postedContent, pendingApproval, invoices, unreadNotifs] = await Promise.all([
-      Content.countDocuments({ clientId: cid }),
+      Content.countDocuments({ clientId: cid, stage: { $ne: "idea" } }),
       Content.countDocuments({ clientId: cid, stage: "posted" }),
-      Content.countDocuments({ clientId: cid, clientApproved: false, stage: "client_approval" }),
+      Content.countDocuments({ clientId: cid, clientApproved: false, stage: { $in: ["script", "client_approval"] } }),
       Invoice.find({ clientId: cid }).select("totalAmount paidAmount pendingAmount paymentStatus month createdAt").sort({ createdAt:-1 }).limit(3),
       Notification.countDocuments({ recipientId: cid, read: false }),
     ]);
@@ -48,7 +48,14 @@ router.get("/content", async (req, res) => {
   try {
     const { stage, type, page=1, limit=20 } = req.query;
     const filter = { clientId: clientId(req) };
-    if (stage) filter.stage = stage;
+    if (stage) {
+      if (stage === "idea") {
+        return res.json({ content: [], total: 0 });
+      }
+      filter.stage = stage;
+    } else {
+      filter.stage = { $ne: "idea" };
+    }
     if (type)  filter.type  = type;
 
     const total   = await Content.countDocuments(filter);
