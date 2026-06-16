@@ -26,7 +26,7 @@ function buildInvoiceWhatsApp(client, invoice, month, portalLink) {
     `💰 Amount: *₹${Number(invoice.totalAmount).toLocaleString("en-IN")}*\n` +
     `📅 Due Date: *${new Date(invoice.dueDate).toLocaleDateString("en-IN")}*\n\n` +
     `Portal par invoice dekho:\n${portalLink}\n\n` +
-    `Koi sawaal hoy to reply karo. Thank you! 🙏\n` +
+    `If you have any questions, please reply. Thank you! 🙏\n` +
     `– SocialFlipss Team`;
 
   return client.mobile
@@ -76,7 +76,7 @@ async function createInvoiceForClient(client, config, createdBy = null) {
     await notifyClient({
       clientId:  client._id,
       title:     `Invoice Generated — ${month}`,
-      message:   `Tamaro ${month} no invoice ready chhe: ₹${total.toLocaleString("en-IN")}`,
+      message:   `Your invoice for ${month} is ready: ₹${total.toLocaleString("en-IN")}`,
       type:      "invoice_generated",
       link:      `/portal/invoices/${invoice._id}`,
       invoiceId: invoice._id,
@@ -142,7 +142,7 @@ router.get("/:clientId", async (req, res) => {
 router.post("/generate/:clientId", authorize("admin","manager"), async (req, res) => {
   try {
     const config = await AutoInvoiceConfig.findOne({ clientId:req.params.clientId });
-    if (!config) return res.status(404).json({ message:"Auto invoice not configured. Pehla setup karo." });
+    if (!config) return res.status(404).json({ message:"Auto invoice not configured. Please set it up first." });
 
     const client = await Client.findById(req.params.clientId);
     if (!client) return res.status(404).json({ message:"Client not found" });
@@ -240,7 +240,7 @@ router.post("/send-reminders", authorize("admin","manager"), async (req, res) =>
       const waMsg =
         `Hi ${inv.clientId.ownerName} 👋\n\n` +
         `*SocialFlipss — Payment Reminder* ⚠️\n\n` +
-        `Invoice *${inv.invoiceNumber}* no payment pending chhe:\n\n` +
+        `Payment for invoice *${inv.invoiceNumber}* is pending:\n\n` +
         `💰 Pending: *₹${Number(inv.pendingAmount).toLocaleString("en-IN")}*\n` +
         `📅 ${daysPassed} days since invoice\n\n` +
         `Portal par payment karo:\n${portalLink}\n\n` +

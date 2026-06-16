@@ -9,7 +9,7 @@ const commentSchema = new mongoose.Schema({
 
 const contentSchema = new mongoose.Schema(
   {
-    projectId: { type: mongoose.Schema.Types.ObjectId, ref: "Project", required: true },
+    projectId: { type: mongoose.Schema.Types.ObjectId, ref: "Project", required: false, default: null, set: (v) => v === "" ? null : v },
     clientId:  { type: mongoose.Schema.Types.ObjectId, ref: "Client",  required: true },
 
     // Content info
@@ -35,7 +35,7 @@ const contentSchema = new mongoose.Schema(
     },
 
     // Assignment
-    assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null, set: (v) => v === "" ? null : v },
 
     // Dates
     shootDate:   { type: Date,   default: null },

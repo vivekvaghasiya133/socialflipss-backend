@@ -108,7 +108,7 @@ async function sendPaymentReminderEmail({ email, clientName, invoiceNumber, pend
         <p style="margin:4px 0 0;color:#6b7280;font-size:13px;">${daysPassed} days since invoice generated</p>
       </div>
       <a href="${portalLink}" style="display:inline-block;background:#0e9f6e;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;">Pay Now →</a>
-      <p style="color:#6b7280;font-size:13px;margin-top:16px;">Koi sawaal hoy to reply karo. Thank you! 🙏</p>`),
+      <p style="color:#6b7280;font-size:13px;margin-top:16px;">If you have any questions, please reply. Thank you! 🙏</p>`),
   });
 }
 
@@ -120,14 +120,14 @@ async function sendShootReminderEmail({ email, clientName, date, timeSlot, reelC
     subject: `📷 Shoot Reminder — ${date}`,
     html:    baseTemplate(`
       <p style="font-size:15px;color:#111;">Hi <strong>${clientName}</strong>,</p>
-      <p style="color:#374151;margin:12px 0;">Kal tamaro shoot scheduled chhe:</p>
+      <p style="color:#374151;margin:12px 0;">Your shoot is scheduled for tomorrow:</p>
       <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:20px;margin:20px 0;">
         <p style="margin:0;font-size:20px;">📅 <strong>${date}</strong></p>
         <p style="margin:8px 0 0;">⏰ Time: <strong>${timeSlot}</strong></p>
         <p style="margin:4px 0 0;">🎬 Reels: <strong>${reelCount}</strong></p>
         <p style="margin:4px 0 0;">📁 Project: ${projectName}</p>
       </div>
-      <p style="color:#374151;font-size:14px;">Please available rahejo. Koi change hoy to reply karo.</p>`),
+      <p style="color:#374151;font-size:14px;">Please be available. If there is any change, please reply.</p>`),
   });
 }
 

@@ -76,7 +76,7 @@ router.post("/staff-form/:token", async (req, res) => {
 
     const { fromDate, toDate, leaveType, reason } = req.body;
     if (!fromDate || !toDate || !reason)
-      return res.status(400).json({ message: "fromDate, toDate ane reason required chhe." });
+      return res.status(400).json({ message: "fromDate, toDate and reason are required." });
 
     const leave = await Leave.create({
       staffId: staff._id, fromDate, toDate,
@@ -93,7 +93,7 @@ router.post("/staff-form/:token", async (req, res) => {
       console.error("Admin email failed:", mailErr.message);
     }
 
-    res.status(201).json({ message: "Leave request submit thayo! Admin approve/reject karashe." });
+    res.status(201).json({ message: "Leave request submitted! Admin will approve/reject it." });
   } catch (err) {
     res.status(400).json({ message: "Submit failed", error: err.message });
   }

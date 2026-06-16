@@ -80,9 +80,18 @@ router.post("/users", protect, authorize("admin"), async (req, res) => {
 // PUT /api/auth/users/:id — update user
 router.put("/users/:id", protect, authorize("admin"), async (req, res) => {
   try {
-    // Don't allow password update through this route
-    delete req.body.password;
-    const user = await User.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    if (req.body.name) user.name = req.body.name;
+    if (req.body.email) user.email = req.body.email.toLowerCase();
+    if (req.body.role) user.role = req.body.role;
+    if (req.body.position !== undefined) user.position = req.body.position;
+    if (req.body.mobile !== undefined) user.mobile = req.body.mobile;
+    if (req.body.status) user.status = req.body.status;
+    if (req.body.password) user.password = req.body.password;
+
+    await user.save();
     res.json(user);
   } catch (err) {
     res.status(400).json({ message: err.message });
