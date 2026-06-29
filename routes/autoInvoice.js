@@ -12,8 +12,22 @@ router.use(protect);
 async function generateInvoiceNumber() {
   const now    = new Date();
   const prefix = `SF-${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
-  const count  = await Invoice.countDocuments({ invoiceNumber: { $regex: `^${prefix}` } });
-  return `${prefix}-${String(count+1).padStart(3,"0")}`;
+  const invoices = await Invoice.find(
+    { invoiceNumber: { $regex: `^${prefix}-` } },
+    { invoiceNumber: 1 }
+  );
+
+  let maxNum = 0;
+  for (const inv of invoices) {
+    const parts = inv.invoiceNumber.split("-");
+    const numPart = parts[parts.length - 1];
+    const num = parseInt(numPart, 10);
+    if (!isNaN(num) && num > maxNum) {
+      maxNum = num;
+    }
+  }
+
+  return `${prefix}-${String(maxNum + 1).padStart(3, "0")}`;
 }
 
 // ── WhatsApp invoice message ──────────────────────────────────────

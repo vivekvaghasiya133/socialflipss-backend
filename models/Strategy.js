@@ -26,7 +26,20 @@ const strategySchema = new mongoose.Schema(
     contentPillars: { type: String, default: "" },
     competitors:    { type: String, default: "" },
     monthlyPlan:    { type: String, default: "" },
-    reelTopics:     { type: [String], default: () => Array(15).fill("") }, // Array of 15 topics
+    reelTopics: {
+      type: [
+        {
+          title:     { type: String, default: "" },
+          brief:     { type: String, default: "" },
+          status:    { type: String, enum: ["Draft", "Review", "Approved", "Changes Requested"], default: "Draft" },
+          feedback:  { type: String, default: "" },
+          contentId: { type: mongoose.Schema.Types.ObjectId, ref: "Content", default: null }
+        }
+      ],
+      default: () => Array(15).fill(null).map(() => ({
+        title: "", brief: "", status: "Draft", feedback: "", contentId: null
+      }))
+    },
     notes:          { type: String, default: "" },
   },
   { timestamps: true }

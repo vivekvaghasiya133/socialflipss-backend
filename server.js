@@ -1,7 +1,9 @@
 const express    = require("express");
 const mongoose   = require("mongoose");
 const cors       = require("cors");
+const path       = require("path");
 require("dotenv").config();
+const meetingRoutes = require("./routes/meetings");
 
 // Existing routes
 const authRoutes          = require("./routes/auth");
@@ -50,7 +52,9 @@ app.use(cors({
   },
   credentials: true
 }));
-app.use(express.json());
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ limit: "50mb", extended: true }));
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // ── Existing API ──────────────────────────────────────────────────
 app.use("/api/auth",           authRoutes);
@@ -75,6 +79,7 @@ app.use("/api/notifications",  notificationRoutes); // admin notifications
 app.use("/api/hisab",          hisabRoutes);
 app.use("/api/strategies",        strategyRoutes);
 app.use("/api/content-analytics", contentAnalyticsRoutes);
+app.use("/api/meetings",          meetingRoutes);
 
 app.get("/api/health", (req, res) =>
   res.json({ status:"SocialFlipss API ✓", version:"3.0.0", timestamp: new Date() })

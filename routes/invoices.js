@@ -10,10 +10,22 @@ router.use(protect);
 async function generateInvoiceNumber() {
   const now    = new Date();
   const prefix = `SF-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2,"0")}`;
-  const count  = await Invoice.countDocuments({
-    invoiceNumber: { $regex: `^${prefix}` },
-  });
-  return `${prefix}-${String(count + 1).padStart(3, "0")}`;
+  const invoices = await Invoice.find(
+    { invoiceNumber: { $regex: `^${prefix}-` } },
+    { invoiceNumber: 1 }
+  );
+
+  let maxNum = 0;
+  for (const inv of invoices) {
+    const parts = inv.invoiceNumber.split("-");
+    const numPart = parts[parts.length - 1];
+    const num = parseInt(numPart, 10);
+    if (!isNaN(num) && num > maxNum) {
+      maxNum = num;
+    }
+  }
+
+  return `${prefix}-${String(maxNum + 1).padStart(3, "0")}`;
 }
 
 // GET /api/invoices/stats — revenue overview
@@ -115,11 +127,89 @@ router.post("/", authorize("admin", "manager"), async (req, res) => {
   }
 });
 
-// PUT /api/invoices/:id — update invoice (before payment)
+// PUT /api/invoices/:id — update invoice
 router.put("/:id", authorize("admin", "manager"), async (req, res) => {
   try {
-    const invoice = await Invoice.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    res.json(invoice);
+    const invoice = await Invoice.findById(req.params.id);
+    if (!invoice) return res.status(404).json({ message: "Invoice not found" });
+
+    // Extract fields we want to allow updating
+    const {
+      clientId,
+      clientName,
+      clientBusiness,
+      clientMobile,
+      clientEmail,
+      clientCity,
+      month,
+      issueDate,
+      dueDate,
+      items,
+      discount,
+      gstPercent,
+      notes
+    } = req.body;
+
+    if (clientId !== undefined) invoice.clientId = clientId || null;
+    if (clientName !== undefined) invoice.clientName = clientName || "";
+    if (clientBusiness !== undefined) invoice.clientBusiness = clientBusiness || "";
+    if (clientMobile !== undefined) invoice.clientMobile = clientMobile || "";
+    if (clientEmail !== undefined) invoice.clientEmail = clientEmail || "";
+    if (clientCity !== undefined) invoice.clientCity = clientCity || "";
+    if (month !== undefined) invoice.month = month || "";
+    if (issueDate !== undefined) invoice.issueDate = issueDate || Date.now();
+    if (dueDate !== undefined) invoice.dueDate = dueDate || null;
+    if (notes !== undefined) invoice.notes = notes || "";
+
+    if (items !== undefined) {
+      // Calculate amounts
+      const subtotal = items.reduce((s, i) => s + (Number(i.quantity || 1) * Number(i.rate || 0)), 0);
+      const discVal = Number(discount !== undefined ? discount : invoice.discount || 0);
+      const gstPct = Number(gstPercent !== undefined ? gstPercent : invoice.gstPercent || 0);
+      const gstAmount = parseFloat(((subtotal - discVal) * gstPct / 100).toFixed(2));
+      const total = parseFloat((subtotal - discVal + gstAmount).toFixed(2));
+
+      invoice.items = items.map((i) => ({
+        description: i.description,
+        quantity: Number(i.quantity || 1),
+        rate: Number(i.rate || 0),
+        amount: parseFloat((Number(i.quantity || 1) * Number(i.rate || 0)).toFixed(2)),
+      }));
+      invoice.subtotal = subtotal;
+      invoice.discount = discVal;
+      invoice.gstPercent = gstPct;
+      invoice.gstAmount = gstAmount;
+      invoice.totalAmount = total;
+    } else {
+      // If items not updated but discount or gstPercent updated
+      let recalculate = false;
+      if (discount !== undefined && discount !== invoice.discount) {
+        invoice.discount = Number(discount);
+        recalculate = true;
+      }
+      if (gstPercent !== undefined && gstPercent !== invoice.gstPercent) {
+        invoice.gstPercent = Number(gstPercent);
+        recalculate = true;
+      }
+      if (recalculate) {
+        const subtotal = invoice.subtotal;
+        const gstAmount = parseFloat(((subtotal - invoice.discount) * invoice.gstPercent / 100).toFixed(2));
+        const total = parseFloat((subtotal - invoice.discount + gstAmount).toFixed(2));
+        invoice.gstAmount = gstAmount;
+        invoice.totalAmount = total;
+      }
+    }
+
+    // save() will trigger the pre-save hook to calculate pendingAmount and paymentStatus
+    await invoice.save();
+    
+    // Return populated invoice
+    const populated = await Invoice.findById(invoice._id)
+      .populate("clientId", "businessName ownerName mobile email city")
+      .populate("createdBy", "name")
+      .populate("payments.addedBy", "name");
+      
+    res.json(populated);
   } catch (err) {
     res.status(400).json({ message: err.message });
   }
