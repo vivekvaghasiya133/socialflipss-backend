@@ -58,7 +58,7 @@ router.put("/change-password", protect, async (req, res) => {
 // ── User management (admin only) ──────────────────────────────────
 
 // GET /api/auth/users — list all users
-router.get("/users", protect, authorize("admin"), async (req, res) => {
+router.get("/users", protect, authorize("admin", "manager", "team"), async (req, res) => {
   try {
     const users = await User.find().sort({ createdAt: -1 });
     res.json(users);

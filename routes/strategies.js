@@ -62,15 +62,23 @@ router.post("/", authorize("admin", "manager", "team"), async (req, res) => {
     const strategist = req.body.strategist || req.user._id;
     if (!req.body.reelTopics || !req.body.reelTopics.length) {
       const client = await Client.findById(req.body.clientId);
-      let targetCount = 15; // default fallback
+      let targetCount = 0;
       if (client && client.package && client.package.deliverables) {
-        const reelDeliverable = client.package.deliverables.find(d =>
-          d.type && d.type.toLowerCase().includes("reel")
-        );
-        if (reelDeliverable && reelDeliverable.quantity > 0) {
-          targetCount = reelDeliverable.quantity;
-        }
+        client.package.deliverables.forEach(d => {
+          const typeLower = (d.type || "").toLowerCase();
+          if (
+            typeLower.includes("reel") ||
+            typeLower.includes("ugc") ||
+            typeLower.includes("video") ||
+            typeLower.includes("post") ||
+            typeLower.includes("carousel") ||
+            typeLower.includes("youtube")
+          ) {
+            targetCount += d.quantity || 0;
+          }
+        });
       }
+      if (targetCount === 0) targetCount = 15; // default fallback
       req.body.reelTopics = Array(targetCount).fill(null).map(() => ({
         title: "", brief: "", status: "Draft", feedback: "", contentId: null
       }));

@@ -99,7 +99,9 @@ router.get("/", async (req, res) => {
         { mobile: { $regex: search, $options: "i" } },
       ];
     }
-    if (req.user.role === "team") filter.assignedTo = req.user._id;
+    if (req.user.role === "team") {
+      filter.status = { $in: ["active", "paused"] };
+    }
     const total = await Client.countDocuments(filter);
     const clients = await Client.find(filter)
       .populate("assignedTo", "name")
@@ -157,8 +159,9 @@ const getMonthlyCycles = (onboardingDate, now = new Date()) => {
 router.get("/reels-delivery", async (req, res) => {
   try {
     const filter = {};
-    if (req.user.role === "team") filter.assignedTo = req.user._id;
-    filter.status = { $in: ["active", "paused"] };
+    if (req.user.role === "team") {
+      filter.status = { $in: ["active", "paused"] };
+    }
 
     const clients = await Client.find(filter)
       .select("businessName ownerName mobile status onboardingDate package createdAt")

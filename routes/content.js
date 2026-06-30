@@ -47,11 +47,19 @@ router.get("/", async (req, res) => {
     if (stage) filter.stage = stage;
     if (assignedTo) filter.assignedTo = assignedTo;
     if (type) filter.type = type;
-    if (req.user.role === "team") filter.assignedTo = req.user._id;
+    if (req.user.role === "team") {
+      filter.$or = [
+        { assignedTo: req.user._id },
+        { shooterId: req.user._id },
+        { editorId: req.user._id }
+      ];
+    }
 
     const total = await Content.countDocuments(filter);
     const content = await Content.find(filter)
       .populate("assignedTo", "name")
+      .populate("shooterId", "name")
+      .populate("editorId", "name")
       .populate("projectId", "name month")
       .populate("clientId", "businessName")
       .sort({ createdAt: -1 })

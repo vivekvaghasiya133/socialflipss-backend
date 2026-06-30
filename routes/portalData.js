@@ -231,12 +231,14 @@ router.get("/strategy", async (req, res) => {
     const cid = clientId(req);
     // Find the latest strategy in Review or Approved status for this client
     let strategy = await Strategy.findOne({ clientId: cid, status: { $in: ["Review", "Approved"] } })
+      .populate("clientId")
       .populate("strategist", "name")
       .sort({ createdAt: -1 });
 
     if (!strategy) {
       // Fallback: get any latest strategy
       strategy = await Strategy.findOne({ clientId: cid })
+        .populate("clientId")
         .populate("strategist", "name")
         .sort({ createdAt: -1 });
     }
