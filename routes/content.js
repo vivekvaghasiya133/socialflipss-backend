@@ -47,13 +47,7 @@ router.get("/", async (req, res) => {
     if (stage) filter.stage = stage;
     if (assignedTo) filter.assignedTo = assignedTo;
     if (type) filter.type = type;
-    if (req.user.role === "team") {
-      filter.$or = [
-        { assignedTo: req.user._id },
-        { shooterId: req.user._id },
-        { editorId: req.user._id }
-      ];
-    }
+    // Allow all team members (including writers and editors) to see the entire content pipeline
 
     const total = await Content.countDocuments(filter);
     const content = await Content.find(filter)

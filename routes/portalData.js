@@ -233,6 +233,7 @@ router.get("/strategy", async (req, res) => {
     let strategy = await Strategy.findOne({ clientId: cid, status: { $in: ["Review", "Approved"] } })
       .populate("clientId")
       .populate("strategist", "name")
+      .populate("reelTopics.contentId")
       .sort({ createdAt: -1 });
 
     if (!strategy) {
@@ -240,6 +241,7 @@ router.get("/strategy", async (req, res) => {
       strategy = await Strategy.findOne({ clientId: cid })
         .populate("clientId")
         .populate("strategist", "name")
+        .populate("reelTopics.contentId")
         .sort({ createdAt: -1 });
     }
 
@@ -250,9 +252,20 @@ router.get("/strategy", async (req, res) => {
     if (doc.reelTopics && doc.reelTopics.length) {
       doc.reelTopics = doc.reelTopics.map(topic => {
         if (typeof topic === "string") {
-          return { title: topic, brief: "", status: "Draft", feedback: "", contentId: null };
+          return { title: topic, brief: "", scriptText: "", status: "Draft", approvedBy: "", feedback: "", contentId: null };
         }
-        return topic;
+        let contentScript = "";
+        let actualContentId = topic.contentId;
+        if (topic.contentId && typeof topic.contentId === "object") {
+          contentScript = topic.contentId.scriptText || "";
+          actualContentId = topic.contentId._id;
+        }
+        return {
+          ...topic,
+          scriptText: topic.scriptText || contentScript || "",
+          approvedBy: topic.approvedBy || "",
+          contentId: actualContentId
+        };
       });
     }
 
@@ -266,8 +279,8 @@ router.get("/strategy", async (req, res) => {
 router.put("/strategy/:id/topics/:topicId/review", async (req, res) => {
   try {
     const { status, feedback } = req.body;
-    // status must be "Approved" or "Changes Requested"
-    if (!["Approved", "Changes Requested"].includes(status)) {
+    // status must be "Approved", "Changes Requested", or "Review" (to revert/undo)
+    if (!["Approved", "Changes Requested", "Review"].includes(status)) {
       return res.status(400).json({ message: "Invalid review status" });
     }
 
@@ -282,6 +295,11 @@ router.put("/strategy/:id/topics/:topicId/review", async (req, res) => {
     const topic = strategy.reelTopics[topicIdx];
     topic.status = status;
     topic.feedback = feedback || "";
+    if (status === "Approved") {
+      topic.approvedBy = "client";
+    } else {
+      topic.approvedBy = "";
+    }
 
     // Find or create Project for this client and month to ensure E2E connection
     let project = await Project.findOne({ clientId: cid, month: strategy.month });
@@ -297,35 +315,48 @@ router.put("/strategy/:id/topics/:topicId/review", async (req, res) => {
       });
     }
 
-    // If Approved, create Content item in "script" stage
+    // If Approved, create Content item in "script" stage (or "shoot" stage if scriptText is provided)
     if (status === "Approved") {
+      const hasScript = Boolean(topic.scriptText && topic.scriptText.trim());
+      const nextStage = hasScript ? "shoot" : "script";
+      const isApproved = hasScript ? true : false;
+      const approvalStatus = hasScript ? "approved" : "pending";
+
       if (!topic.contentId) {
         const newContent = await Content.create({
           clientId: cid,
           projectId: project._id, // LINKED!
           title: topic.title || "Untitled Reel Topic",
           description: topic.brief || "",
+          scriptText: topic.scriptText || "",
+          scriptApproved: isApproved,
+          scriptApprovalStatus: approvalStatus,
           type: "reel",
-          stage: "script", // starts in script stage
+          stage: nextStage,
           createdBy: strategy.strategist,
         });
         topic.contentId = newContent._id;
       } else {
-        // If content already exists, update its details and project linkage
+        // If content already exists, update its details, project linkage AND transition stage
         await Content.findByIdAndUpdate(topic.contentId, {
           projectId: project._id,
           title: topic.title || "Untitled Reel Topic",
           description: topic.brief || "",
+          scriptText: topic.scriptText || "",
+          scriptApproved: isApproved,
+          scriptApprovalStatus: approvalStatus,
+          stage: nextStage,
         });
       }
-    } else if (status === "Changes Requested") {
-      // If changes requested, we could optionally push content back or mark it
-      // For now, if contentId exists, update its stage/note
+    } else if (status === "Changes Requested" || status === "Review") {
+      // If changes requested or reverted to review, push content back to idea stage and reset script approval
       if (topic.contentId) {
         await Content.findByIdAndUpdate(topic.contentId, {
           projectId: project._id,
           stage: "idea", // push back to idea stage
-          approvalNote: feedback || "",
+          scriptApproved: false,
+          scriptApprovalStatus: "pending",
+          approvalNote: status === "Review" ? "Client reverted approval back to review." : (feedback || ""),
         });
       }
     }

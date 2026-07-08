@@ -26,7 +26,7 @@ router.get("/", async (req, res) => {
     const filter = {};
     if (clientId) filter.clientId = clientId;
     if (status)   filter.status   = status;
-    if (req.user.role === "team") filter.assignedTo = req.user._id;
+    // Allow all team members to view all projects
 
     const total    = await Project.countDocuments(filter);
     const projects = await Project.find(filter)

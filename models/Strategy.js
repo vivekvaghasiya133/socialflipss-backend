@@ -29,15 +29,17 @@ const strategySchema = new mongoose.Schema(
     reelTopics: {
       type: [
         {
-          title:     { type: String, default: "" },
-          brief:     { type: String, default: "" },
-          status:    { type: String, enum: ["Draft", "Review", "Approved", "Changes Requested"], default: "Draft" },
-          feedback:  { type: String, default: "" },
-          contentId: { type: mongoose.Schema.Types.ObjectId, ref: "Content", default: null }
+          title:      { type: String, default: "" },
+          brief:      { type: String, default: "" },
+          scriptText: { type: String, default: "" },
+          status:     { type: String, enum: ["Draft", "Review", "Approved", "Changes Requested"], default: "Draft" },
+          approvedBy: { type: String, default: "" },
+          feedback:   { type: String, default: "" },
+          contentId:  { type: mongoose.Schema.Types.ObjectId, ref: "Content", default: null }
         }
       ],
       default: () => Array(15).fill(null).map(() => ({
-        title: "", brief: "", status: "Draft", feedback: "", contentId: null
+        title: "", brief: "", scriptText: "", status: "Draft", approvedBy: "", feedback: "", contentId: null
       }))
     },
     notes:          { type: String, default: "" },
