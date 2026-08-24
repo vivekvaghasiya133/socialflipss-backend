@@ -88,10 +88,15 @@ router.get("/stats", async (req, res) => {
 // GET /api/clients
 router.get("/", async (req, res) => {
   try {
-    const { status, industry, search, page = 1, limit = 20 } = req.query;
+    const { status, industry, search, page = 1, limit = 20, showQuickClients } = req.query;
     const filter = {};
     if (status) filter.status = status;
     if (industry) filter.industry = industry;
+    if (showQuickClients === "true") {
+      filter.isQuickClient = true;
+    } else {
+      filter.isQuickClient = { $ne: true };
+    }
     if (search) {
       filter.$or = [
         { businessName: { $regex: search, $options: "i" } },
@@ -164,7 +169,7 @@ router.get("/reels-delivery", async (req, res) => {
     }
 
     const clients = await Client.find(filter)
-      .select("businessName ownerName mobile status onboardingDate package createdAt")
+      .select("businessName ownerName mobile status onboardingDate package createdAt isQuickClient quickServiceType")
       .sort({ createdAt: -1 });
 
     const clientIds = clients.map(c => c._id);
@@ -202,19 +207,41 @@ router.get("/reels-delivery", async (req, res) => {
           return refDate >= cycle.start && refDate < cycle.end;
         });
 
-        const shotCount = cycleReels.filter(r => 
-          r.stage === "editing" && !r.driveLink
+        // Filter to only get the latest/active reel for each slot (1 to monthlyTarget)
+        const activeChecklistReels = [];
+        for (let i = 1; i <= monthlyTarget; i++) {
+          const matchingReels = cycleReels.filter(r => 
+            r.title && r.title.toLowerCase().replace(/\s/g, '').startsWith(`reel#${i}`)
+          );
+          if (matchingReels.length > 0) {
+            matchingReels.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+            activeChecklistReels.push(matchingReels[0]);
+          }
+        }
+
+        const scriptCount = activeChecklistReels.filter(r => 
+          ["script", "shoot", "edit", "qc", "client_approval", "posted", "approved", "shooting", "editing"].includes(r.stage)
         ).length;
 
-        const editedCount = cycleReels.filter(r => 
-          r.stage === "editing" && r.driveLink
+        const shootCount = activeChecklistReels.filter(r => {
+          const type = r.serviceType || client.quickServiceType || "Full Management";
+          if (type === "Only Editing") return true;
+          return ["shoot", "edit", "qc", "client_approval", "posted", "approved", "shooting", "editing"].includes(r.stage);
+        }).length;
+
+        const editCount = activeChecklistReels.filter(r => 
+          ["edit", "qc", "client_approval", "posted", "approved", "editing"].includes(r.stage) || !!r.driveLink
         ).length;
 
-        const deliveredCount = cycleReels.filter(r => 
-          r.stage === "posted"
+        const deliveredCount = activeChecklistReels.filter(r => 
+          ["posted", "approved"].includes(r.stage)
         ).length;
 
-        const totalTarget = monthlyTarget + carryOver;
+        // Force carry-over to 0 for the current active cycle (the last one) so the user starts fresh.
+        const isCurrentCycle = (idx === cycles.length - 1);
+        const currentCarryOver = isCurrentCycle ? 0 : carryOver;
+
+        const totalTarget = monthlyTarget + currentCarryOver;
         const pendingCount = totalTarget - deliveredCount;
 
         cycleResults.push({
@@ -222,12 +249,14 @@ router.get("/reels-delivery", async (req, res) => {
           start: cycle.start,
           end: cycle.end,
           baseTarget: monthlyTarget,
-          carryOver,
+          carryOver: currentCarryOver,
           totalTarget,
-          shot: shotCount,
-          edited: editedCount,
+          script: scriptCount,
+          shoot: shootCount,
+          edited: editCount,
           delivered: deliveredCount,
-          pending: pendingCount
+          pending: pendingCount,
+          reels: cycleReels
         });
 
         carryOver = Math.max(0, pendingCount);

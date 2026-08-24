@@ -36,6 +36,70 @@ function normalizeStrategy(strat) {
   return doc;
 }
 
+// Dynamically populate strategy reelTopics with live reels from database
+async function populateStrategyWithReels(strat) {
+  if (!strat) return null;
+  const doc = normalizeStrategy(strat);
+  
+  try {
+    const Project = require("../models/Project");
+    const Content = require("../models/Content");
+    
+    const clientId = doc.clientId?._id || doc.clientId;
+    const project = await Project.findOne({ clientId, month: doc.month });
+    
+    if (project) {
+      const reels = await Content.find({ clientId, projectId: project._id, type: "reel" });
+      
+      if (!doc.reelTopics || doc.reelTopics.length === 0) {
+        doc.reelTopics = [];
+      }
+      
+      // Target length is based on client's monthlyTarget or length of strategy Topics
+      const Client = require("../models/Client");
+      const client = await Client.findById(clientId);
+      let target = doc.reelTopics.length || 15;
+      if (client && client.package && client.package.deliverables) {
+        const reelDeliverable = client.package.deliverables.find(d =>
+          d.type && d.type.toLowerCase().includes("reel")
+        );
+        if (reelDeliverable) {
+          target = reelDeliverable.quantity || target;
+        }
+      }
+      
+      // Ensure the topics array is sized correctly
+      while (doc.reelTopics.length < target) {
+        doc.reelTopics.push({ title: "", brief: "", scriptText: "", status: "Draft", approvedBy: "", feedback: "", contentId: null });
+      }
+
+      for (let i = 1; i <= target; i++) {
+        const matchingReels = reels.filter(r => 
+          r.title && r.title.toLowerCase().replace(/\s/g, '').startsWith(`reel#${i}`)
+        );
+        matchingReels.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+        const reel = matchingReels[0] || null;
+        
+        if (reel) {
+          const concept = reel.title.toLowerCase().startsWith(`reel #${i}:`) ? reel.title.split(":").slice(1).join(":").trim() : reel.title;
+          
+          doc.reelTopics[i - 1] = {
+            ...doc.reelTopics[i - 1],
+            title: concept || doc.reelTopics[i - 1].title || "",
+            scriptText: reel.scriptText || doc.reelTopics[i - 1].scriptText || "",
+            contentId: reel._id,
+            status: reel.stage === "posted" ? "Approved" : (doc.reelTopics[i - 1].status || "Draft")
+          };
+        }
+      }
+    }
+  } catch (err) {
+    console.error("Failed to populate strategy with reels:", err.message);
+  }
+  
+  return doc;
+}
+
 // Helper to sync strategy topics to Content items in "idea" stage
 async function syncStrategyTopicsToContent(strategy) {
   const cid = strategy.clientId?._id || strategy.clientId;
@@ -132,7 +196,7 @@ router.get("/", async (req, res) => {
       .populate("reelTopics.contentId")
       .sort({ createdAt: -1 });
 
-    const processed = strategies.map(normalizeStrategy);
+    const processed = await Promise.all(strategies.map(populateStrategyWithReels));
     res.json(processed);
   } catch (err) {
     res.status(500).json({ message: "Server error", error: err.message });
@@ -147,7 +211,8 @@ router.get("/:id", async (req, res) => {
       .populate("strategist", "name")
       .populate("reelTopics.contentId");
     if (!strategy) return res.status(404).json({ message: "Strategy not found" });
-    res.json(normalizeStrategy(strategy));
+    const processed = await populateStrategyWithReels(strategy);
+    res.json(processed);
   } catch (err) {
     res.status(500).json({ message: "Server error", error: err.message });
   }

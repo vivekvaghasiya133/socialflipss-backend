@@ -67,6 +67,9 @@ const clientSchema = new mongoose.Schema(
     // ── Internal notes ───────────────────────────────────────────
     internalNotes: { type: String, default: "" },
 
+    isQuickClient:  { type: Boolean, default: false },
+    quickServiceType: { type: String, default: "Full Management" }, // e.g. "Only Editing", "Shooting + Editing", "Full Management"
+
     onboardingDate: { type: Date, default: Date.now },
     renewalDate:    { type: Date, default: null },
   },

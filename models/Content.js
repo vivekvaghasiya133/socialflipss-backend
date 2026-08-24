@@ -53,6 +53,15 @@ const contentSchema = new mongoose.Schema(
     shootDate: { type: Date, default: null },
     postDate: { type: Date, default: null },  // Planned post date
     postedAt: { type: Date, default: null },  // Actual post date
+    editedAt: { type: Date, default: null },  // Date when editor finished editing
+    revisionCount: { type: Number, default: 0 }, // Number of times it went back for changes
+    revisionsList: [
+      {
+        feedbackText: { type: String, default: "" },
+        date: { type: Date, default: Date.now }
+      }
+    ],
+    serviceType: { type: String, default: "" }, // "Only Editing", "Shooting + Editing", or empty (falls back to client default)
 
     // Links
     driveLink: { type: String, default: "" },  // Google Drive / raw file

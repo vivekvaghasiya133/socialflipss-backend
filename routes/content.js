@@ -66,6 +66,88 @@ router.get("/", async (req, res) => {
   }
 });
 
+// GET /api/content/editor-productivity — aggregate month-wise counts of edited videos for each editor
+router.get("/editor-productivity", async (req, res) => {
+  try {
+    const User = require("../models/User");
+    const editors = await User.find({ role: { $in: ["team", "admin", "manager", "staff"] } });
+
+    const reels = await Content.find({
+      editorId: { $ne: null }
+    }).populate("editorId", "name");
+
+    const productivity = editors.map(editor => {
+      const editorReels = reels.filter(r => 
+        r.editorId && r.editorId._id.toString() === editor._id.toString()
+      );
+      
+      const months = {};
+      const days = {};
+      let totalRevisions = 0;
+
+      editorReels.forEach(reel => {
+        // Count revisions and group them by date
+        totalRevisions += (reel.revisionCount || 0);
+        if (reel.revisionsList && reel.revisionsList.length > 0) {
+          reel.revisionsList.forEach(rev => {
+            const revDate = new Date(rev.date);
+            if (!isNaN(revDate.getTime())) {
+              const yyyy = revDate.getFullYear();
+              const mm = String(revDate.getMonth() + 1).padStart(2, '0');
+              const dd = String(revDate.getDate()).padStart(2, '0');
+              const dayKey = `${yyyy}-${mm}-${dd}`;
+              
+              if (!days[dayKey]) {
+                days[dayKey] = { edits: 0, revisions: [] };
+              }
+              days[dayKey].revisions.push({
+                _id: rev._id,
+                reelId: reel._id,
+                reelTitle: reel.title,
+                feedbackText: rev.feedbackText || "No feedback text comments."
+              });
+            }
+          });
+        }
+
+        // Count completed edits
+        if (reel.editedAt) {
+          const date = new Date(reel.editedAt);
+          if (!isNaN(date.getTime())) {
+            const year = date.getFullYear();
+            const monthNum = String(date.getMonth() + 1).padStart(2, '0');
+            const monthKey = `${year}-${monthNum}`; // e.g. "2026-08"
+            months[monthKey] = (months[monthKey] || 0) + 1;
+
+            const dayNum = String(date.getDate()).padStart(2, '0');
+            const dayKey = `${year}-${monthNum}-${dayNum}`; // e.g. "2026-08-24"
+            
+            if (!days[dayKey]) {
+              days[dayKey] = { edits: 0, revisions: [] };
+            }
+            days[dayKey].edits += 1;
+          }
+        }
+      });
+
+      return {
+        editor: {
+          _id: editor._id,
+          name: editor.name,
+          role: editor.role
+        },
+        months,
+        days,
+        revisions: totalRevisions
+      };
+    });
+
+    res.json(productivity);
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
+
 // GET /api/content/:id
 router.get("/:id", async (req, res) => {
   try {
@@ -82,8 +164,48 @@ router.get("/:id", async (req, res) => {
 });
 
 // POST /api/content
-router.post("/", authorize("admin", "manager"), async (req, res) => {
+router.post("/", async (req, res) => {
   try {
+    if (req.body.clientId && !req.body.projectId) {
+      const Project = require("../models/Project");
+      const Client = require("../models/Client");
+      const client = await Client.findById(req.body.clientId);
+      if (client) {
+        const now = new Date();
+        const year = now.getFullYear();
+        const monthNum = String(now.getMonth() + 1).padStart(2, '0');
+        const monthString = `${year}-${monthNum}`; // "2026-08"
+        const monthLabel = now.toLocaleString("default", { month: "long" }) + " " + year + " Plan";
+
+        let project = await Project.findOne({ clientId: client._id, month: monthString });
+        if (!project) {
+          project = await Project.create({
+            clientId: client._id,
+            name: monthLabel,
+            month: monthString,
+            status: "active",
+            startDate: new Date(year, now.getMonth(), 1),
+            endDate: new Date(year, now.getMonth() + 1, 0),
+            createdBy: req.user._id
+          });
+        }
+        req.body.projectId = project._id;
+
+        // Auto-create a Strategy Vault entry for the client for this month if it doesn't exist
+        const Strategy = require("../models/Strategy");
+        let strategy = await Strategy.findOne({ clientId: client._id, month: monthString });
+        if (!strategy) {
+          await Strategy.create({
+            clientId: client._id,
+            month: monthString,
+            strategist: req.user._id,
+            status: "Draft",
+            notes: "Auto-created from Reels Tracker"
+          });
+        }
+      }
+    }
+
     const item = await Content.create({ ...req.body, createdBy: req.user._id });
     const populated = await item.populate(["assignedTo", "projectId", "clientId"]);
     res.status(201).json(populated);
@@ -117,6 +239,32 @@ router.put("/:id", async (req, res) => {
     // If moving to "posted", set postedAt timestamp
     if (req.body.stage === "posted" && !req.body.postedAt) {
       req.body.postedAt = new Date();
+    }
+
+    // Increment revisionCount when moving back to edit stage from QC, Client Approval, Posted, or Approved
+    const isMovingToRevision = ["qc", "client_approval", "posted", "approved"].includes(current.stage) && req.body.stage === "edit";
+    if (isMovingToRevision) {
+      req.body.revisionCount = (current.revisionCount || 0) + 1;
+      
+      const feedback = req.body.qcFeedbackText || current.qcFeedbackText || "QC revision requested.";
+      const newRevision = {
+        feedbackText: feedback,
+        date: new Date()
+      };
+      
+      const updatedList = [...(current.revisionsList || [])];
+      updatedList.push(newRevision);
+      req.body.revisionsList = updatedList;
+    }
+
+    // Set editedAt when stage transitions to edit or later
+    const isEditingCompleted = ["edit", "qc", "client_approval", "posted", "approved"].includes(req.body.stage || current.stage);
+    if (isEditingCompleted) {
+      if (!current.editedAt) {
+        req.body.editedAt = new Date();
+      }
+    } else if (req.body.stage && !isEditingCompleted) {
+      req.body.editedAt = null;
     }
 
     const item = await Content.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true })
