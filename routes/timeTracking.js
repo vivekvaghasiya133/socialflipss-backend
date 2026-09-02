@@ -201,4 +201,25 @@ router.get("/team-overview", protect, async (req, res) => {
   }
 });
 
+// ── 7. GET CURRENT USER DATE-WISE HISTORY (Past 30 Days or Month) ──
+router.get("/my-history", protect, async (req, res) => {
+  try {
+    const { month, limit } = req.query; // month in "YYYY-MM" format
+    const filter = { user: req.user._id };
+
+    if (month) {
+      filter.date = { $regex: `^${month}` };
+    }
+
+    const history = await StaffTimeLog.find(filter)
+      .sort({ date: -1 })
+      .limit(Number(limit) || 31)
+      .lean();
+
+    res.json({ success: true, history });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 module.exports = router;

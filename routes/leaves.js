@@ -103,6 +103,57 @@ router.post("/staff-form/:token", async (req, res) => {
 
 router.use(protect);
 
+// ── STAFF PORTAL LEAVE ROUTES (Logged-in Staff) ──
+router.get("/my-leaves", async (req, res) => {
+  try {
+    let staff = await Staff.findOne({ email: req.user.email });
+    if (!staff) {
+      staff = await Staff.findOne({ name: req.user.name });
+    }
+    if (!staff) return res.json({ success: true, leaves: [] });
+
+    const leaves = await Leave.find({ staffId: staff._id }).sort({ createdAt: -1 }).limit(20);
+    res.json({ success: true, leaves });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+router.post("/apply-my-leave", async (req, res) => {
+  try {
+    const { fromDate, toDate, leaveType, reason } = req.body;
+    if (!fromDate || !toDate || !reason) {
+      return res.status(400).json({ success: false, message: "fromDate, toDate and reason are required." });
+    }
+
+    let staff = await Staff.findOne({ email: req.user.email });
+    if (!staff) {
+      staff = await Staff.findOne({ name: req.user.name });
+    }
+    if (!staff) {
+      staff = await Staff.create({
+        name: req.user.name,
+        email: req.user.email,
+        position: req.user.position || req.user.role,
+        salary: 25000,
+      });
+    }
+
+    const leave = await Leave.create({
+      staffId: staff._id,
+      fromDate,
+      toDate,
+      leaveType: leaveType || "full_day",
+      reason,
+      status: "pending",
+    });
+
+    res.status(201).json({ success: true, message: "Leave request submitted to Admin! 🌴", leave });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 // GET all leave requests
 router.get("/", async (req, res) => {
   try {
