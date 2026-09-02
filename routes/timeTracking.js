@@ -23,11 +23,19 @@ router.get("/status", protect, async (req, res) => {
 
     const activeBreak = log.breaks.find(b => !b.endTime);
 
+    const isWorking = log.status === "punched_in";
+    const isBreak = log.status === "on_break";
+    const isOut = log.status === "punched_out";
+
     res.json({
       success: true,
-      punchedIn: log.status !== "punched_out",
+      punchedIn: !isOut,
+      isPunchedIn: isWorking || isBreak,
+      isOnBreak: isBreak,
+      isPunchedOut: isOut,
       status: log.status,
       activeBreak: activeBreak || null,
+      todayLog: log,
       log,
     });
   } catch (err) {
