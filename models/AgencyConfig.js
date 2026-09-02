@@ -46,6 +46,7 @@ const agencyConfigSchema = new mongoose.Schema(
     agencyName:    { type: String, default: "SocialFlipss" },
     tagline:       { type: String, default: "Creative Media & Production Agency" },
     logoUrl:       { type: String, default: "" },
+    faviconUrl:    { type: String, default: "" },
     primaryColor:  { type: String, default: "#6366F1" }, // Indigo / Violet Luxury
     contactMobile: { type: String, default: "919213532835" },
     contactEmail:  { type: String, default: "contact@socialflipss.com" },

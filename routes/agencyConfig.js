@@ -120,7 +120,7 @@ router.get("/", async (req, res) => {
 router.put("/branding", protect, async (req, res) => {
   try {
     const config = await getOrCreateConfig();
-    const fields = ["agencyName", "tagline", "logoUrl", "primaryColor", "contactMobile", "contactEmail", "address", "gstNumber"];
+    const fields = ["agencyName", "tagline", "logoUrl", "faviconUrl", "primaryColor", "contactMobile", "contactEmail", "address", "gstNumber"];
     fields.forEach(f => {
       if (req.body[f] !== undefined) config[f] = req.body[f];
     });
