@@ -4,7 +4,7 @@ const StaffTimeLog = require("../models/StaffTimeLog");
 const User         = require("../models/User");
 const { protect }  = require("../middleware/auth");
 
-const getTodayStr = () => new Date().toISOString().split("T")[0];
+const getTodayStr = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 
 // ── 1. GET CURRENT USER'S TIME STATUS TODAY ──
 router.get("/status", protect, async (req, res) => {
@@ -51,7 +51,7 @@ router.post("/punch-in", protect, async (req, res) => {
     let log = await StaffTimeLog.findOne({ user: req.user._id, date: today });
 
     if (log && log.status !== "punched_out") {
-      return res.status(400).json({ success: false, message: "Already punched in for today!" });
+      return res.json({ success: true, message: "Already punched in! Have a productive shift! ✨", log });
     }
 
     if (!log) {
