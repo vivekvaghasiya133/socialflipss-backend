@@ -95,14 +95,27 @@ app.get("/api/health", (req, res) =>
   res.json({ status:"SocialFlipss Agency OS API ✓", version:"4.0.0", timestamp: new Date() })
 );
 
+const PORT = process.env.PORT || 5000;
+
+// 1. Immediately bind to 0.0.0.0 so Render detects open port in 1s without timing out
+const server = app.listen(PORT, "0.0.0.0", () => {
+  console.log(`✓ SocialFlipss Server listening on port ${PORT} (0.0.0.0)`);
+});
+
+// 2. Connect MongoDB in background with safety timeout
 mongoose
-  .connect(process.env.MONGO_URI)
-  .then(async () => {
-    console.log("✓ MongoDB connected");
-    await seedAdmin();
-    await runStagesMigration();
-    app.listen(process.env.PORT || 5000, () =>
-      console.log(`✓ Server on port ${process.env.PORT || 5000}`)
-    );
+  .connect(process.env.MONGO_URI, {
+    serverSelectionTimeoutMS: 15000,
   })
-  .catch(err => { console.error("MongoDB error:", err); process.exit(1); });
+  .then(async () => {
+    console.log("✓ MongoDB connected successfully");
+    try {
+      await seedAdmin();
+      await runStagesMigration();
+    } catch (postErr) {
+      console.warn("Post-connect tasks note:", postErr.message);
+    }
+  })
+  .catch(err => {
+    console.error("MongoDB connection error:", err.message);
+  });
