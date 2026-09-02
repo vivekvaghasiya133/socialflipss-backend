@@ -20,15 +20,20 @@ const reminderRoutes      = require("./routes/reminders");
 const analyticsRoutes     = require("./routes/analytics");
 const shootScheduleRoutes = require("./routes/shootSchedule");
 
-// Phase 5 — NEW
-const portalAuthRoutes    = require("./routes/portalAuth");
-const portalDataRoutes    = require("./routes/portalData");
-const autoInvoiceRoutes   = require("./routes/autoInvoice");
-const notificationRoutes  = require("./routes/notifications");
-const hisabRoutes         = require("./routes/hisab");
-const strategyRoutes      = require("./routes/strategies");
+// Phase 5 & 6 — Agency OS
+const portalAuthRoutes       = require("./routes/portalAuth");
+const portalDataRoutes       = require("./routes/portalData");
+const autoInvoiceRoutes      = require("./routes/autoInvoice");
+const notificationRoutes     = require("./routes/notifications");
+const hisabRoutes            = require("./routes/hisab");
+const strategyRoutes         = require("./routes/strategies");
 const contentAnalyticsRoutes = require("./routes/contentAnalytics");
-const runStagesMigration   = require("./utils/migration");
+const runStagesMigration      = require("./utils/migration");
+
+// ── Ultra-Clean Production Pipeline & Corporate HRMS Routes ──
+const productionRoutes   = require("./routes/production");
+const timeTrackingRoutes = require("./routes/timeTracking");
+const agencyConfigRoutes = require("./routes/agencyConfig");
 
 const seedAdmin = require("./middleware/seedAdmin");
 
@@ -71,18 +76,23 @@ app.use("/api/reminders",      reminderRoutes);
 app.use("/api/analytics",      analyticsRoutes);
 app.use("/api/shoot-schedule", shootScheduleRoutes);
 
-// ── Phase 5 — NEW ─────────────────────────────────────────────────
-app.use("/api/portal/auth",    portalAuthRoutes);   // client login/OTP
-app.use("/api/portal",         portalDataRoutes);   // client portal data
-app.use("/api/auto-invoice",   autoInvoiceRoutes);  // auto invoice + reminders
-app.use("/api/notifications",  notificationRoutes); // admin notifications
-app.use("/api/hisab",          hisabRoutes);
+// ── Phase 5 ───────────────────────────────────────────────────────
+app.use("/api/portal/auth",       portalAuthRoutes);   // client login/OTP
+app.use("/api/portal",            portalDataRoutes);   // client portal data
+app.use("/api/auto-invoice",      autoInvoiceRoutes);  // auto invoice + reminders
+app.use("/api/notifications",     notificationRoutes); // admin notifications
+app.use("/api/hisab",             hisabRoutes);
 app.use("/api/strategies",        strategyRoutes);
 app.use("/api/content-analytics", contentAnalyticsRoutes);
 app.use("/api/meetings",          meetingRoutes);
 
+// ── Ultra-Clean Agency OS & Mobile APIs ──────────────────────────
+app.use("/api/production",        productionRoutes);
+app.use("/api/time-tracking",     timeTrackingRoutes);
+app.use("/api/agency-config",     agencyConfigRoutes);
+
 app.get("/api/health", (req, res) =>
-  res.json({ status:"SocialFlipss API ✓", version:"3.0.0", timestamp: new Date() })
+  res.json({ status:"SocialFlipss Agency OS API ✓", version:"4.0.0", timestamp: new Date() })
 );
 
 mongoose
