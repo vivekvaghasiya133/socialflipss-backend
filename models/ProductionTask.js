@@ -17,7 +17,7 @@ const productionTaskSchema = new mongoose.Schema(
     },
     stage: {
       type: String,
-      enum: ["script", "shoot", "edit", "qc", "delivery", "completed"],
+      enum: ["script", "shoot", "edit", "qc", "client_approval", "posted", "completed"],
       default: "script",
     },
     priority: {
@@ -70,7 +70,26 @@ const productionTaskSchema = new mongoose.Schema(
     reelsCountCredited:  { type: Number, default: 1 },
     editingCompletedAt:  { type: Date, default: null },
 
-    // ── STAGE 4: DELIVERY & CLIENT METER ──
+    // ── STAGE 4: QUALITY CHECK (QC) ──
+    qcReviewer:          { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    qcNotes:             { type: String, default: "" },
+    qcStatus: {
+      type: String,
+      enum: ["pending", "approved", "changes_requested"],
+      default: "pending",
+    },
+    qcCompletedAt:       { type: Date, default: null },
+
+    // ── STAGE 5: CLIENT APPROVAL ──
+    clientApprovalStatus: {
+      type: String,
+      enum: ["pending", "approved", "changes_requested"],
+      default: "pending",
+    },
+    clientFeedback:      { type: String, default: "" },
+    clientApprovedAt:    { type: Date, default: null },
+
+    // ── STAGE 6: POSTED / COMPLETED ──
     isDelivered:   { type: Boolean, default: false },
     deliveredAt:   { type: Date, default: null },
     instagramUrl:  { type: String, default: "" },

@@ -3,7 +3,25 @@ const router  = express.Router();
 const ProductionTask = require("../models/ProductionTask");
 const StaffTimeLog   = require("../models/StaffTimeLog");
 const Client         = require("../models/Client");
+const Notification   = require("../models/Notification");
 const { protect }    = require("../middleware/auth");
+
+// Helper to create notifications
+const sendInAppNotification = async ({ recipientId, title, message, link, clientId }) => {
+  try {
+    if (!recipientId) return;
+    await Notification.create({
+      recipientType: "admin",
+      recipientId,
+      title,
+      message,
+      link: link || "/admin/production-hub",
+      clientId: clientId || null,
+    });
+  } catch (err) {
+    console.warn("Notification creation warning:", err.message);
+  }
+};
 
 // ── 1. GET ALL TASKS / FILTERED PIPELINE ──
 router.get("/tasks", protect, async (req, res) => {
@@ -14,7 +32,6 @@ router.get("/tasks", protect, async (req, res) => {
     if (clientId) filter.client = clientId;
     if (stage && stage !== "all") filter.stage = stage;
 
-    // Role-specific view
     if (roleFilter === "my_edits") {
       filter.editor = req.user._id;
     } else if (roleFilter === "my_shoots") {
@@ -36,6 +53,7 @@ router.get("/tasks", protect, async (req, res) => {
       .populate("writer", "name avatar")
       .populate("shooter", "name avatar")
       .populate("editor", "name avatar")
+      .populate("qcReviewer", "name")
       .sort({ updatedAt: -1 })
       .limit(200);
 
@@ -46,7 +64,7 @@ router.get("/tasks", protect, async (req, res) => {
   }
 });
 
-// ── 2. GET PIPELINE OVERVIEW & CLIENT QUOTAS ──
+// ── 2. GET OVERVIEW & CLIENT METERS ──
 router.get("/overview", protect, async (req, res) => {
   try {
     const [tasksByStage, clients] = await Promise.all([
@@ -61,6 +79,8 @@ router.get("/overview", protect, async (req, res) => {
       shoot: 0,
       edit: 0,
       qc: 0,
+      client_approval: 0,
+      posted: 0,
       completed: 0,
     };
 
@@ -70,9 +90,8 @@ router.get("/overview", protect, async (req, res) => {
       }
     });
 
-    // Calculate Client Quota Deliveries
     const clientDeliveries = await ProductionTask.aggregate([
-      { $match: { stage: "completed" } },
+      { $match: { stage: { $in: ["posted", "completed"] } } },
       { $group: { _id: "$client", deliveredCount: { $sum: 1 } } }
     ]);
 
@@ -105,10 +124,10 @@ router.get("/overview", protect, async (req, res) => {
   }
 });
 
-// ── 3. CREATE PRODUCTION TASK / REEL ──
+// ── 3. CREATE REEL TASK (Initial Script Stage) ──
 router.post("/tasks", protect, async (req, res) => {
   try {
-    const { client, title, goal, priority, servicePackage, reelNumber } = req.body;
+    const { client, title, goal, priority, servicePackage, reelNumber, concept, hook, bodyText, cta, writer } = req.body;
     if (!client || !title) {
       return res.status(400).json({ success: false, message: "Client and Title are required." });
     }
@@ -120,6 +139,11 @@ router.post("/tasks", protect, async (req, res) => {
       priority: priority || "medium",
       servicePackage: servicePackage || "",
       reelNumber: reelNumber || 1,
+      concept: concept || "",
+      hook: hook || "",
+      bodyText: bodyText || "",
+      cta: cta || "",
+      writer: writer || req.user._id,
       createdBy: req.user._id,
       stage: "script",
     });
@@ -127,9 +151,7 @@ router.post("/tasks", protect, async (req, res) => {
     await task.save();
     const populated = await ProductionTask.findById(task._id)
       .populate("client", "businessName mobile")
-      .populate("writer", "name")
-      .populate("shooter", "name")
-      .populate("editor", "name");
+      .populate("writer", "name");
 
     res.json({ success: true, task: populated });
   } catch (err) {
@@ -138,45 +160,56 @@ router.post("/tasks", protect, async (req, res) => {
   }
 });
 
-// ── 4. STAGE 1: SCRIPT / CONCEPT UPDATE ──
-router.put("/tasks/:id/script", protect, async (req, res) => {
+// ── 4. STEP 1: SCRIPT PASS ➔ MUST ASSIGN SHOOT PERSON & DETAILS ──
+router.put("/tasks/:id/pass-script-to-shoot", protect, async (req, res) => {
   try {
-    const { writer, concept, hook, bodyText, cta, scriptStatus, scriptNotes, passToShoot } = req.body;
-    const task = await ProductionTask.findById(req.id || req.params.id);
-    if (!task) return res.status(404).json({ success: false, message: "Task not found" });
+    const { shooter, shootDate, shootTime, location, targetReels, shootNote } = req.body;
 
-    if (writer !== undefined) task.writer = writer;
-    if (concept !== undefined) task.concept = concept;
-    if (hook !== undefined) task.hook = hook;
-    if (bodyText !== undefined) task.bodyText = bodyText;
-    if (cta !== undefined) task.cta = cta;
-    if (scriptNotes !== undefined) task.scriptNotes = scriptNotes;
-    if (scriptStatus !== undefined) task.scriptStatus = scriptStatus;
-
-    if (passToShoot || scriptStatus === "approved") {
-      task.scriptStatus = "approved";
-      task.scriptApprovedAt = new Date();
-      task.stage = "shoot";
+    if (!shooter) {
+      return res.status(400).json({ success: false, message: "Shoot Person (Shooter) is mandatory to pass script to shoot!" });
+    }
+    if (!shootDate) {
+      return res.status(400).json({ success: false, message: "Shoot Date is mandatory!" });
     }
 
+    const task = await ProductionTask.findById(req.params.id).populate("client", "businessName");
+    if (!task) return res.status(404).json({ success: false, message: "Task not found" });
+
+    task.scriptStatus = "approved";
+    task.scriptApprovedAt = new Date();
+    task.stage = "shoot";
+    task.shooter = shooter;
+    task.shootDate = shootDate;
+    task.shootTime = shootTime || "10:00 AM";
+    task.location = location || "Client Store";
+    task.targetReels = Number(targetReels) || 1;
+    task.shootNote = shootNote || "";
+    task.shootStatus = "scheduled";
+
     await task.save();
-    res.json({ success: true, task });
+
+    // 🔔 Notify assigned shooter
+    await sendInAppNotification({
+      recipientId: shooter,
+      title: `🎥 New Shoot Assigned: ${task.client?.businessName}`,
+      message: `You are assigned for shoot on ${task.shootDate} at ${task.shootTime}. Target: ${task.targetReels} Reels.`,
+      clientId: task.client?._id,
+    });
+
+    res.json({ success: true, message: "Script passed and Shoot Person assigned! 🎬", task });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// ── 5. STAGE 2: SHOOT LOGGING & RAW FOOTAGE HANDOFF (Matches WhatsApp flow) ──
-router.put("/tasks/:id/shoot", protect, async (req, res) => {
+// ── 5. STEP 2: EDIT SHOOT INFO AT ANY TIME (Change Shooter, Time, Location) ──
+router.put("/tasks/:id/update-shoot-info", protect, async (req, res) => {
   try {
-    const {
-      shooter, shootDate, shootTime, location,
-      targetReels, completedReels, rawFootageLink,
-      shootNote, shootStatus, handoverToEdit
-    } = req.body;
-
-    const task = await ProductionTask.findById(req.params.id);
+    const { shooter, shootDate, shootTime, location, targetReels, completedReels, shootNote } = req.body;
+    const task = await ProductionTask.findById(req.params.id).populate("client", "businessName");
     if (!task) return res.status(404).json({ success: false, message: "Task not found" });
+
+    const shooterChanged = shooter && shooter.toString() !== (task.shooter?.toString() || "");
 
     if (shooter !== undefined) task.shooter = shooter;
     if (shootDate !== undefined) task.shootDate = shootDate;
@@ -184,102 +217,234 @@ router.put("/tasks/:id/shoot", protect, async (req, res) => {
     if (location !== undefined) task.location = location;
     if (targetReels !== undefined) task.targetReels = targetReels;
     if (completedReels !== undefined) task.completedReels = completedReels;
-    if (rawFootageLink !== undefined) task.rawFootageLink = rawFootageLink;
     if (shootNote !== undefined) task.shootNote = shootNote;
-    if (shootStatus !== undefined) task.shootStatus = shootStatus;
-
-    if (handoverToEdit || (rawFootageLink && completedReels > 0)) {
-      task.shootStatus = "done";
-      task.shootCompletedAt = new Date();
-      task.stage = "edit";
-      task.editingStatus = "assigned";
-    }
 
     await task.save();
-    res.json({ success: true, task });
+
+    if (shooterChanged) {
+      await sendInAppNotification({
+        recipientId: shooter,
+        title: `🎥 Shoot Reassigned: ${task.client?.businessName}`,
+        message: `You are assigned for shoot on ${task.shootDate} at ${task.shootTime}. Location: ${task.location}`,
+        clientId: task.client?._id,
+      });
+    }
+
+    res.json({ success: true, message: "Shoot info updated successfully! 🎥", task });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// ── 6. STAGE 3: ASSIGN EDITOR ──
-router.put("/tasks/:id/assign-editor", protect, async (req, res) => {
+// ── 6. STEP 2: SHOOT COMPLETED ➔ AUTOMATIC SHOOTER MONTHLY SCORE CREDIT ──
+router.put("/tasks/:id/complete-shoot", protect, async (req, res) => {
   try {
-    const { editor, editorDeadline, editorNotes } = req.body;
-    const task = await ProductionTask.findById(req.params.id);
+    const { completedReels, rawFootageLink, shootNote } = req.body;
+    const task = await ProductionTask.findById(req.params.id).populate("client", "businessName");
     if (!task) return res.status(404).json({ success: false, message: "Task not found" });
 
-    task.editor = editor;
+    task.shootStatus = "done";
+    task.shootCompletedAt = new Date();
+    if (completedReels !== undefined) task.completedReels = Number(completedReels);
+    if (rawFootageLink) task.rawFootageLink = rawFootageLink;
+    if (shootNote) task.shootNote = shootNote;
+
+    await task.save();
+
+    // 🏆 Credit Shooter Score in StaffTimeLog (for today & monthly tracking!)
+    const shooterId = task.shooter || req.user._id;
+    const todayStr = new Date().toISOString().split("T")[0];
+
+    await StaffTimeLog.findOneAndUpdate(
+      { user: shooterId, date: todayStr },
+      { $inc: { shootsCompletedCount: 1 } },
+      { upsert: false }
+    );
+
+    res.json({ success: true, message: "Shoot marked Complete! +1 Shoot credited to Shooter. 🎥", task });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── 7. STEP 3: HANDOFF TO EDIT ➔ STRICT VALIDATION (RAW DATA & EDITOR REQUIRED!) ──
+router.put("/tasks/:id/handoff-to-edit", protect, async (req, res) => {
+  try {
+    const { rawFootageLink, editor, editorDeadline, editorNotes } = req.body;
+
+    const task = await ProductionTask.findById(req.params.id).populate("client", "businessName");
+    if (!task) return res.status(404).json({ success: false, message: "Task not found" });
+
+    const finalLink = rawFootageLink || task.rawFootageLink;
+    if (!finalLink || finalLink.trim() === "") {
+      return res.status(400).json({
+        success: false,
+        message: "❌ Raw Footage / Data Link is strictly required to move to Editing stage! (રો ડેટા નાખ્યા વગર આગળ નહિ વધે)",
+      });
+    }
+
+    const finalEditor = editor || task.editor;
+    if (!finalEditor) {
+      return res.status(400).json({
+        success: false,
+        message: "❌ Video Editor assignment is required to move to Editing stage!",
+      });
+    }
+
+    task.rawFootageLink = finalLink;
+    task.editor = finalEditor;
     task.editorAssignedAt = new Date();
     if (editorDeadline) task.editorDeadline = new Date(editorDeadline);
     if (editorNotes) task.editorNotes = editorNotes;
-    task.editingStatus = "in_progress";
     task.stage = "edit";
+    task.editingStatus = "assigned";
 
     await task.save();
-    res.json({ success: true, task });
+
+    // 🔔 Notify Video Editor
+    await sendInAppNotification({
+      recipientId: finalEditor,
+      title: `✂️ New Editing Assigned: ${task.client?.businessName}`,
+      message: `Raw footage is ready for Reel #${task.reelNumber}. Open Production Hub to edit.`,
+      clientId: task.client?._id,
+    });
+
+    res.json({ success: true, message: "Raw data verified & handed over to Video Editor! ✂️", task });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// ── 7. STAGE 3: EDITOR SUBMITS & AUTOMATIC REELS SCORE INCREMENT ──
-router.put("/tasks/:id/complete-edit", protect, async (req, res) => {
+// ── 8. STEP 4: EDITOR SUBMITS REEL ➔ MOVES TO QC STAGE ──
+router.put("/tasks/:id/submit-edit-to-qc", protect, async (req, res) => {
   try {
     const { editedPreviewLink, editorNotes } = req.body;
-    const task = await ProductionTask.findById(req.params.id);
+
+    if (!editedPreviewLink || editedPreviewLink.trim() === "") {
+      return res.status(400).json({ success: false, message: "Please provide the edited video preview link!" });
+    }
+
+    const task = await ProductionTask.findById(req.params.id).populate("client", "businessName");
     if (!task) return res.status(404).json({ success: false, message: "Task not found" });
 
-    task.editedPreviewLink = editedPreviewLink || task.editedPreviewLink;
-    task.editorNotes = editorNotes || task.editorNotes;
-    task.editingStatus = "completed";
+    task.editedPreviewLink = editedPreviewLink;
+    if (editorNotes) task.editorNotes = editorNotes;
+    task.editingStatus = "review";
     task.editingCompletedAt = new Date();
     task.stage = "qc";
+    task.qcStatus = "pending";
 
     await task.save();
 
-    // 🏆 Gamified Productivity Auto-Credit:
-    // Automatically increment the Editor's Daily Score in StaffTimeLog!
+    // 🏆 Credit Editor score in StaffTimeLog
     const editorId = task.editor || req.user._id;
     const todayStr = new Date().toISOString().split("T")[0];
-
     await StaffTimeLog.findOneAndUpdate(
       { user: editorId, date: todayStr },
       { $inc: { reelsEditedCount: 1 } },
       { upsert: false }
     );
 
-    res.json({
-      success: true,
-      message: "Reel editing marked completed! Score credited to editor. 🎉",
-      task,
+    // 🔔 Notify Admin / Manager for QC
+    await sendInAppNotification({
+      recipientId: task.createdBy || req.user._id,
+      title: `🔍 Reel Ready for QC: ${task.client?.businessName}`,
+      message: `Reel #${task.reelNumber} submitted by editor. Please review in QC stage.`,
+      clientId: task.client?._id,
     });
+
+    res.json({ success: true, message: "Edited reel submitted to QC! Score credited to editor. 🎉", task });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// ── 8. STAGE 4: CLIENT DELIVERY & MILESTONE UPDATE ──
-router.put("/tasks/:id/deliver", protect, async (req, res) => {
+// ── 9. STEP 5: QC DECISION ➔ REVISIONS BACK TO EDIT OR PASS TO CLIENT APPROVAL ──
+router.put("/tasks/:id/qc-decision", protect, async (req, res) => {
   try {
-    const { instagramUrl, clientNotes } = req.body;
-    const task = await ProductionTask.findById(req.params.id);
+    const { decision, qcNotes } = req.body; // decision: "changes_needed" | "approved"
+
+    const task = await ProductionTask.findById(req.params.id).populate("client", "businessName");
     if (!task) return res.status(404).json({ success: false, message: "Task not found" });
 
-    task.isDelivered = true;
-    task.deliveredAt = new Date();
-    task.stage = "completed";
-    if (instagramUrl) task.instagramUrl = instagramUrl;
-    if (clientNotes) task.clientNotes = clientNotes;
+    task.qcReviewer = req.user._id;
+    task.qcCompletedAt = new Date();
 
-    await task.save();
-    res.json({ success: true, task });
+    if (decision === "changes_needed") {
+      task.stage = "edit";
+      task.editingStatus = "in_progress";
+      task.qcStatus = "changes_requested";
+      task.qcNotes = qcNotes || "QC requested revisions. Please check and fix.";
+
+      await task.save();
+
+      // 🔔 Notify Editor about QC revisions
+      await sendInAppNotification({
+        recipientId: task.editor,
+        title: `⚠️ QC Changes on Reel #${task.reelNumber}: ${task.client?.businessName}`,
+        message: `Feedback: ${task.qcNotes}`,
+        clientId: task.client?._id,
+      });
+
+      return res.json({ success: true, message: "Revisions sent back to Video Editor! 🔄", task });
+    } else {
+      task.stage = "client_approval";
+      task.qcStatus = "approved";
+      task.clientApprovalStatus = "pending";
+      task.qcNotes = qcNotes || "QC Passed";
+
+      await task.save();
+
+      res.json({ success: true, message: "QC Approved! Moved to Client Approval stage. 🌟", task });
+    }
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// ── 9. DELETE TASK ──
+// ── 10. STEP 6: CLIENT APPROVAL DECISION ➔ REVISIONS BACK TO EDIT OR READY TO POST ──
+router.put("/tasks/:id/client-decision", protect, async (req, res) => {
+  try {
+    const { decision, clientFeedback, instagramUrl } = req.body; // decision: "changes_needed" | "approved"
+
+    const task = await ProductionTask.findById(req.params.id).populate("client", "businessName");
+    if (!task) return res.status(404).json({ success: false, message: "Task not found" });
+
+    if (decision === "changes_needed") {
+      task.stage = "edit";
+      task.editingStatus = "in_progress";
+      task.clientApprovalStatus = "changes_requested";
+      task.clientFeedback = clientFeedback || "Client requested changes.";
+
+      await task.save();
+
+      // 🔔 Notify Editor
+      await sendInAppNotification({
+        recipientId: task.editor,
+        title: `⚠️ Client Changes on Reel #${task.reelNumber}: ${task.client?.businessName}`,
+        message: `Client Feedback: ${task.clientFeedback}`,
+        clientId: task.client?._id,
+      });
+
+      return res.json({ success: true, message: "Client changes sent back to Video Editor! 🔄", task });
+    } else {
+      task.stage = "posted";
+      task.clientApprovalStatus = "approved";
+      task.clientApprovedAt = new Date();
+      task.isDelivered = true;
+      task.deliveredAt = new Date();
+      if (instagramUrl) task.instagramUrl = instagramUrl;
+
+      await task.save();
+
+      res.json({ success: true, message: "Reel Approved & Marked Ready to Post! Client quota updated! 🚀", task });
+    }
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── 11. DELETE TASK ──
 router.delete("/tasks/:id", protect, async (req, res) => {
   try {
     await ProductionTask.findByIdAndDelete(req.params.id);
