@@ -243,6 +243,16 @@ router.put("/tasks/:id/complete-shoot", protect, async (req, res) => {
     const task = await ProductionTask.findById(req.params.id).populate("client", "businessName");
     if (!task) return res.status(404).json({ success: false, message: "Task not found" });
 
+    // Strict Permission: Only Admin, Operations Manager, or Assigned Shooter can complete shoot!
+    const isMaster = req.user.role === "admin" || req.user.role === "manager";
+    const isAssignedShooter = task.shooter && (String(task.shooter) === String(req.user._id));
+    if (!isMaster && !isAssignedShooter) {
+      return res.status(403).json({
+        success: false,
+        message: "Access Denied: Only the assigned Shooter, Admin, or Manager can mark this shoot as complete."
+      });
+    }
+
     task.shootStatus = "done";
     task.shootCompletedAt = new Date();
     if (completedReels !== undefined) task.completedReels = Number(completedReels);
