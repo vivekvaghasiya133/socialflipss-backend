@@ -209,13 +209,20 @@ router.post("/tasks", protect, async (req, res) => {
       cta: cta || "",
       writer: writer || req.user._id,
       createdBy: req.user._id,
-      stage: "script",
+      stage: req.body.stage || "script",
+      shooter: req.body.shooter || null,
+      shootDate: req.body.shootDate || "",
+      shootTime: req.body.shootTime || "",
+      location: req.body.location || "",
+      editor: req.body.editor || null,
     });
 
     await task.save();
     const populated = await ProductionTask.findById(task._id)
       .populate("client", "businessName mobile")
-      .populate("writer", "name");
+      .populate("writer", "name")
+      .populate("shooter", "name")
+      .populate("editor", "name");
 
     res.json({ success: true, task: populated });
   } catch (err) {
@@ -642,6 +649,58 @@ router.put("/tasks/:id/client-decision", protect, async (req, res) => {
       res.json({ success: true, message: "Reel Approved & Marked Ready to Post! Client quota updated! 🚀", task });
     }
   } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── 10B. UPDATE TASK GENERAL / KANBAN DRAG & DROP STAGE TRANSITIONS ──
+router.put("/tasks/:id", protect, async (req, res) => {
+  try {
+    const task = await ProductionTask.findById(req.params.id);
+    if (!task) {
+      return res.status(404).json({ success: false, message: "Task not found" });
+    }
+
+    const updatableFields = [
+      "title", "goal", "priority", "servicePackage", "concept", "hook",
+      "bodyText", "cta", "scriptStatus", "scriptNotes", "writer",
+      "shooter", "shootDate", "shootTime", "location", "targetReels",
+      "completedReels", "shootStatus", "rawFootageLink", "shootNote",
+      "editor", "editingStatus", "editedPreviewLink", "editorNotes",
+      "qcReviewer", "qcNotes", "qcStatus", "clientApprovalStatus",
+      "clientFeedback", "instagramUrl", "clientNotes", "stage"
+    ];
+
+    updatableFields.forEach(f => {
+      if (req.body[f] !== undefined) {
+        task[f] = req.body[f];
+      }
+    });
+
+    if (req.body.stage === "posted" || req.body.stage === "completed") {
+      task.isDelivered = true;
+      if (!task.deliveredAt) task.deliveredAt = new Date();
+    }
+
+    await task.save();
+
+    const isMaster = req.user.role === "admin" || req.user.role === "manager";
+    const populated = await ProductionTask.findById(task._id)
+      .populate("client", "businessName mobile package")
+      .populate("writer", "name role")
+      .populate("shooter", "name role")
+      .populate("editor", "name role")
+      .populate("qcReviewer", "name role");
+
+    const doc = populated.toObject();
+    if (!isMaster && doc.client) {
+      doc.client.mobile = "••••••••••";
+      doc.client.ownerName = "";
+    }
+
+    res.json({ success: true, task: doc, message: "Task updated successfully!" });
+  } catch (err) {
+    console.error("PUT /tasks/:id error:", err);
     res.status(500).json({ success: false, message: err.message });
   }
 });

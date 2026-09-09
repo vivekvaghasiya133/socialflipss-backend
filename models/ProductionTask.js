@@ -17,7 +17,7 @@ const productionTaskSchema = new mongoose.Schema(
     },
     stage: {
       type: String,
-      enum: ["script", "shoot", "edit", "qc", "client_approval", "posted", "completed"],
+      enum: ["idea", "script", "shoot", "edit", "qc", "client_approval", "posted", "completed"],
       default: "script",
     },
     priority: {
