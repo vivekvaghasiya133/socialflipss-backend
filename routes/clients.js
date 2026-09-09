@@ -94,8 +94,14 @@ router.get("/", async (req, res) => {
     if (industry) filter.industry = industry;
     if (showQuickClients === "true") {
       filter.isQuickClient = true;
+    } else if (req.query.all === "true" || req.query.includeAll === "true" || req.query.includeQuickClients === "true" || req.query.includeAgencies === "true") {
+      // Return all clients including agencies & quick clients
     } else {
-      filter.isQuickClient = { $ne: true };
+      // Include regular clients and all agency clients!
+      filter.$or = [
+        { isQuickClient: { $ne: true } },
+        { clientType: "agency" }
+      ];
     }
     if (search) {
       filter.$or = [
