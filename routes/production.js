@@ -1,3 +1,33 @@
+// ── HELPER: STRICT CONTINUOUS REEL NUMBER SEQUENCE PER CLIENT (1, 2, 3, 4...) ──
+async function autoResequenceClientTasks(clientId) {
+  if (!clientId) return;
+  try {
+    const clientTasks = await ProductionTask.find({ client: clientId }).sort({ createdAt: 1, _id: 1 });
+    for (let i = 0; i < clientTasks.length; i++) {
+      const expected = i + 1;
+      if (clientTasks[i].reelNumber !== expected) {
+        clientTasks[i].reelNumber = expected;
+        await clientTasks[i].save();
+      }
+    }
+  } catch (err) {
+    console.error("autoResequenceClientTasks error:", err);
+  }
+}
+
+// Auto-sync sequence on startup
+setTimeout(async () => {
+  try {
+    const clientIds = await ProductionTask.distinct("client");
+    for (const cId of clientIds) {
+      if (cId) await autoResequenceClientTasks(cId);
+    }
+    console.log("✓ Production reel sequences verified & synchronized across all clients");
+  } catch (e) {
+    console.error("Initial resequence error:", e);
+  }
+}, 1200);
+
 const express = require("express");
 const router  = express.Router();
 const ProductionTask = require("../models/ProductionTask");
@@ -54,7 +84,7 @@ router.get("/tasks", protect, async (req, res) => {
       .populate("shooter", "name avatar")
       .populate("editor", "name avatar")
       .populate("qcReviewer", "name")
-      .sort({ updatedAt: -1 })
+      .sort({ reelNumber: 1, createdAt: 1 })
       .limit(200);
 
     res.json({ success: true, tasks });
@@ -95,20 +125,32 @@ router.get("/overview", protect, async (req, res) => {
       { $group: { _id: "$client", deliveredCount: { $sum: 1 } } }
     ]);
 
+    const clientInProgress = await ProductionTask.aggregate([
+      { $match: { stage: { $nin: ["posted", "completed"] } } },
+      { $group: { _id: "$client", inProgressCount: { $sum: 1 } } }
+    ]);
+
     const deliveryMap = {};
     clientDeliveries.forEach(d => {
       deliveryMap[d._id.toString()] = d.deliveredCount;
     });
 
+    const inProgressMap = {};
+    clientInProgress.forEach(d => {
+      inProgressMap[d._id.toString()] = d.inProgressCount;
+    });
+
     const clientQuotas = clients.map(c => {
       const reelsQuota = c.package?.deliverables?.find(d => /reel/i.test(d.type || ""))?.quantity || 30;
       const delivered = deliveryMap[c._id.toString()] || 0;
+      const inProgress = inProgressMap[c._id.toString()] || 0;
       return {
         _id: c._id,
         businessName: c.businessName,
         packageName: c.package?.name || "Custom Retainer",
         quota: reelsQuota,
         delivered,
+        inProgress,
         percentage: Math.min(100, Math.round((delivered / reelsQuota) * 100)),
       };
     });
@@ -132,13 +174,24 @@ router.post("/tasks", protect, async (req, res) => {
       return res.status(400).json({ success: false, message: "Client and Title are required." });
     }
 
+    // Auto-calculate continuous reelNumber for this client (no duplicates!)
+    const existingCount = await ProductionTask.countDocuments({ client });
+    const maxTask = await ProductionTask.findOne({ client }).sort({ reelNumber: -1 });
+    const nextNumber = maxTask && maxTask.reelNumber ? Math.max(maxTask.reelNumber + 1, existingCount + 1) : 1;
+
+    let finalReelNumber = Number(reelNumber);
+    // If not provided, or < 1, or default 1 passed when client already has tasks -> auto assign next sequential number
+    if (!finalReelNumber || finalReelNumber < 1 || (finalReelNumber === 1 && existingCount > 0)) {
+      finalReelNumber = nextNumber;
+    }
+
     const task = new ProductionTask({
       client,
       title,
       goal: goal || "Authority",
       priority: priority || "medium",
       servicePackage: servicePackage || "",
-      reelNumber: reelNumber || 1,
+      reelNumber: finalReelNumber,
       concept: concept || "",
       hook: hook || "",
       bodyText: bodyText || "",
@@ -156,6 +209,63 @@ router.post("/tasks", protect, async (req, res) => {
     res.json({ success: true, task: populated });
   } catch (err) {
     console.error("POST /tasks error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── 4B. STEP 1 BATCH: PASS MULTIPLE SCRIPTS TO SHOOT TOGETHER ──
+router.put("/tasks/batch-pass-to-shoot", protect, async (req, res) => {
+  try {
+    const { taskIds, shooter, shootDate, shootTime, location, targetReels, shootNote } = req.body;
+
+    if (!Array.isArray(taskIds) || taskIds.length === 0) {
+      return res.status(400).json({ success: false, message: "Please select at least one task." });
+    }
+    if (!shooter) {
+      return res.status(400).json({ success: false, message: "Shoot Person (Shooter) is mandatory!" });
+    }
+    if (!shootDate) {
+      return res.status(400).json({ success: false, message: "Shoot Date is mandatory!" });
+    }
+
+    const tasks = await ProductionTask.find({ _id: { $in: taskIds } }).populate("client", "businessName");
+    if (tasks.length === 0) {
+      return res.status(404).json({ success: false, message: "No tasks found." });
+    }
+
+    const now = new Date();
+    await ProductionTask.updateMany(
+      { _id: { $in: taskIds } },
+      {
+        $set: {
+          scriptStatus: "approved",
+          scriptApprovedAt: now,
+          stage: "shoot",
+          shooter,
+          shootDate,
+          shootTime: shootTime || "03:00 PM",
+          location: location || "Client Store",
+          targetReels: Number(targetReels) || taskIds.length,
+          shootNote: shootNote || "",
+          shootStatus: "scheduled",
+        }
+      }
+    );
+
+    const clientName = tasks[0]?.client?.businessName || "Client";
+    await sendInAppNotification({
+      recipientId: shooter,
+      title: "🎥 New Shoot Assigned: " + clientName + " (" + tasks.length + " Reels)",
+      message: "You are assigned for " + tasks.length + " Reels shoot on " + shootDate + " at " + (shootTime || "03:00 PM") + ". Target: " + (targetReels || tasks.length) + " Reels.",
+      clientId: tasks[0]?.client?._id,
+    });
+
+    res.json({
+      success: true,
+      message: tasks.length + " Scripts passed and assigned to Shoot successfully! 🎬",
+      count: tasks.length,
+    });
+  } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
@@ -272,6 +382,77 @@ router.put("/tasks/:id/complete-shoot", protect, async (req, res) => {
     );
 
     res.json({ success: true, message: "Shoot marked Complete! +1 Shoot credited to Shooter. 🎥", task });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── 7B. STEP 3 BATCH: HANDOFF MULTIPLE REELS TO EDIT TOGETHER ──
+router.put("/tasks/batch-handoff-to-edit", protect, async (req, res) => {
+  try {
+    const { handoffs } = req.body;
+
+    if (!Array.isArray(handoffs) || handoffs.length === 0) {
+      return res.status(400).json({ success: false, message: "Please select at least one reel to handoff." });
+    }
+
+    // Validate each handoff item
+    for (let i = 0; i < handoffs.length; i++) {
+      const item = handoffs[i];
+      if (!item.taskId) {
+        return res.status(400).json({ success: false, message: "Task ID missing for item #" + (i + 1) });
+      }
+      if (!item.rawFootageLink || item.rawFootageLink.trim() === "") {
+        return res.status(400).json({
+          success: false,
+          message: "❌ Raw Footage / Data Link is strictly required for Reel #" + (item.reelNumber || (i + 1)) + "! (રો ડેટા નાખ્યા વગર આગળ નહિ વધે)",
+        });
+      }
+      if (!item.editor) {
+        return res.status(400).json({
+          success: false,
+          message: "❌ Video Editor assignment is required for Reel #" + (item.reelNumber || (i + 1)) + "!",
+        });
+      }
+    }
+
+    const updatedTasks = [];
+    const now = new Date();
+
+    for (const item of handoffs) {
+      const task = await ProductionTask.findById(item.taskId).populate("client", "businessName");
+      if (!task) continue;
+
+      task.rawFootageLink = item.rawFootageLink.trim();
+      task.editor = item.editor;
+      task.editorAssignedAt = now;
+      if (item.editorDeadline) task.editorDeadline = new Date(item.editorDeadline);
+      if (item.editorNotes) task.editorNotes = item.editorNotes.trim();
+      task.stage = "edit";
+      task.editingStatus = "assigned";
+
+      await task.save();
+      updatedTasks.push(task);
+
+      // Notify Video Editor
+      try {
+        await sendInAppNotification({
+          recipientId: item.editor,
+          title: "✂️ New Editing Assigned: " + (task.client?.businessName || "Client"),
+          message: "Raw footage is ready for Reel #" + task.reelNumber + " (" + (task.title || "Reel") + "). Open Production Hub to edit.",
+          clientId: task.client?._id,
+        });
+      } catch (notifErr) {
+        console.error("Notification error:", notifErr);
+      }
+    }
+
+    res.json({
+      success: true,
+      message: "Successfully handed off " + updatedTasks.length + " Reels to Video Editing! ✂️",
+      count: updatedTasks.length,
+      tasks: updatedTasks,
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -457,8 +638,37 @@ router.put("/tasks/:id/client-decision", protect, async (req, res) => {
 // ── 11. DELETE TASK ──
 router.delete("/tasks/:id", protect, async (req, res) => {
   try {
+    const task = await ProductionTask.findById(req.params.id);
+    if (!task) {
+      return res.status(404).json({ success: false, message: "Task not found" });
+    }
+
+    const isMaster = req.user.role === "admin" || req.user.role === "manager";
+    const isCreator = task.createdBy && String(task.createdBy) === String(req.user._id);
+    if (!isMaster && !isCreator) {
+      return res.status(403).json({ success: false, message: "Access Denied: Only Admin, Manager, or Creator can delete this task." });
+    }
+
+    const clientId = task.client;
     await ProductionTask.findByIdAndDelete(req.params.id);
-    res.json({ success: true, message: "Task deleted successfully" });
+    await autoResequenceClientTasks(clientId);
+    res.json({ success: true, message: "Task deleted and sequence re-numbered successfully" });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── 12. MANUAL RESEQUENCE REELS ENDPOINT ──
+router.post("/tasks/resequence", protect, async (req, res) => {
+  try {
+    const clientIds = await ProductionTask.distinct("client");
+    for (const cId of clientIds) {
+      if (cId) await autoResequenceClientTasks(cId);
+    }
+    const tasks = await ProductionTask.find()
+      .populate("client", "businessName")
+      .sort({ client: 1, reelNumber: 1 });
+    res.json({ success: true, message: "Reel sequence synced successfully!", count: tasks.length });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

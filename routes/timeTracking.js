@@ -2,6 +2,64 @@ const express = require("express");
 const router  = express.Router();
 const StaffTimeLog = require("../models/StaffTimeLog");
 const User         = require("../models/User");
+const Staff        = require("../models/Staff");
+// Sync User status with Staff status and deactivate known duplicates
+setTimeout(async () => {
+  try {
+    const inactiveStaff = await Staff.find({ status: "inactive" }).lean();
+    const inactEmails = inactiveStaff.map(s => (s.email || "").toLowerCase().trim()).filter(Boolean);
+    const inactNames = inactiveStaff.map(s => (s.name || "").toLowerCase().trim()).filter(Boolean);
+
+    // 1. Deactivate users matching inactive staff
+    for (const inact of inactiveStaff) {
+      if (inact.email) {
+        await User.updateMany(
+          { email: inact.email.toLowerCase().trim(), role: { $nin: ["admin"] } },
+          { $set: { status: "inactive" } }
+        );
+      }
+      if (inact.name) {
+        await User.updateMany(
+          { name: new RegExp("^" + inact.name.trim() + "$", "i"), role: { $nin: ["admin"] } },
+          { $set: { status: "inactive" } }
+        );
+      }
+    }
+
+    // 2. Ensure users matching ACTIVE staff are strictly set to active!
+    const activeStaff = await Staff.find({ status: "active" }).lean();
+    for (const act of activeStaff) {
+      if (act.email) {
+        await User.updateMany(
+          { email: act.email.toLowerCase().trim() },
+          { $set: { status: "active" } }
+        );
+      }
+      if (act.name) {
+        await User.updateMany(
+          { name: new RegExp("^" + act.name.trim() + "$", "i") },
+          { $set: { status: "active" } }
+        );
+      }
+    }
+
+    // 3. Deactivate specific known duplicate accounts & activate primary Jay Panchali
+    await User.updateMany(
+      { email: { $in: ["mordiyavaibhavi18@gmail.com", "jaypanchali@gmail.com"] } },
+      { $set: { status: "inactive" } }
+    );
+    await User.updateOne(
+      { email: "jaypanchani0607@gmail.com" },
+      { $set: { status: "active", name: "Jay Panchali", position: "Shooter", role: "shooter" } }
+    );
+
+    console.log("✓ User active/inactive status synced with Staff directory");
+  } catch (e) {
+    console.error("User sync error:", e);
+  }
+}, 1500);
+
+
 const { protect }  = require("../middleware/auth");
 
 const getTodayStr = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
@@ -171,21 +229,72 @@ router.post("/punch-out", protect, async (req, res) => {
   }
 });
 
-// ── 6. ADMIN DAILY TEAM LEADERBOARD & LIVE STATUS ──
+// ── 6. ADMIN DAILY TEAM LEADERBOARD & LIVE STATUS (ACTIVE STAFF ONLY) ──
 router.get("/team-overview", protect, async (req, res) => {
   try {
     const today = req.query.date || getTodayStr();
-    const [allUsers, logsToday] = await Promise.all([
+
+    // Fetch active users, active staff, inactive staff, and today logs
+    const [allUsers, activeStaff, inactiveStaff, logsToday] = await Promise.all([
       User.find({ status: "active" }).select("name email role position avatar").lean(),
+      Staff.find({ status: "active" }).select("email name position").lean(),
+      Staff.find({ status: "inactive" }).select("email name").lean(),
       StaffTimeLog.find({ date: today }).lean(),
     ]);
 
+    const activeEmails = new Set(activeStaff.map((s) => (s.email || "").toLowerCase().trim()).filter(Boolean));
+    const activeNames = new Set(activeStaff.map((s) => (s.name || "").toLowerCase().trim()).filter(Boolean));
+    const inactiveEmails = new Set(inactiveStaff.map((s) => (s.email || "").toLowerCase().trim()).filter(Boolean));
+    const inactiveNames = new Set(inactiveStaff.map((s) => (s.name || "").toLowerCase().trim()).filter(Boolean));
+
+    // Filter users: active staff & admins stay active; only exclude truly inactive staff
+    const activeUsers = allUsers.filter((u) => {
+      const email = (u.email || "").toLowerCase().trim();
+      const name = (u.name || "").toLowerCase().trim();
+      if (u.role === "admin" || email === "admin@socialflipss.com" || email === "vivek@gmail.com") {
+        return true;
+      }
+      if (activeEmails.has(email) || activeNames.has(name)) {
+        return true;
+      }
+      if (inactiveEmails.has(email) || inactiveNames.has(name)) {
+        return false;
+      }
+      return true;
+    });
+
+    // Deduplicate accounts with identical person name
+    const seenNames = new Map();
+    activeUsers.forEach((u) => {
+      const normName = u.name.toLowerCase().replace(/\s+/g, " ").trim();
+      if (!seenNames.has(normName)) {
+        seenNames.set(normName, u);
+      } else {
+        const existing = seenNames.get(normName);
+        if (
+          (u.role === "shooter" || u.role === "editor" || u.role === "manager") &&
+          existing.role === "team"
+        ) {
+          seenNames.set(normName, u);
+        }
+      }
+    });
+
+    const dedupedUsers = Array.from(seenNames.values());
+
+    // Sort: Admin/Owner first, then alphabetical
+    dedupedUsers.sort((a, b) => {
+      if (a.role === "admin" && b.role !== "admin") return -1;
+      if (b.role === "admin" && a.role !== "admin") return 1;
+      return a.name.localeCompare(b.name);
+    });
+
     const logMap = {};
-    logsToday.forEach(l => {
+    logsToday.forEach((l) => {
       logMap[l.user.toString()] = l;
     });
 
-    const teamOverview = allUsers.map(u => {
+    const teamOverview = dedupedUsers.map((u) => {
       const log = logMap[u._id.toString()];
       return {
         userId: u._id,
@@ -205,6 +314,60 @@ router.get("/team-overview", protect, async (req, res) => {
 
     res.json({ success: true, date: today, team: teamOverview });
   } catch (err) {
+    console.error("GET /team-overview error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+router.get("/staff-history/:userId", protect, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { month } = req.query; // e.g. "2026-09"
+
+    const staffUser = await User.findById(userId).select("name email role position avatar status");
+    if (!staffUser) {
+      return res.status(404).json({ success: false, message: "Staff user not found" });
+    }
+
+    const filter = { user: userId };
+    if (month && month !== "all") {
+      filter.date = { $regex: `^${month}` };
+    }
+
+    const logs = await StaffTimeLog.find(filter).sort({ date: -1 }).lean();
+
+    // Calculate monthly summary
+    let totalWorkMinutes = 0;
+    let totalBreakMinutes = 0;
+    let totalReelsEdited = 0;
+    let totalShootsDone = 0;
+    let daysPresent = logs.length;
+
+    logs.forEach((log) => {
+      totalWorkMinutes += log.totalWorkMinutes || 0;
+      totalBreakMinutes += log.totalBreakMinutes || 0;
+      totalReelsEdited += log.reelsEditedCount || 0;
+      totalShootsDone += log.shootsCompletedCount || 0;
+    });
+
+    const summary = {
+      daysPresent,
+      totalWorkHours: Number((totalWorkMinutes / 60).toFixed(1)),
+      totalBreakHours: Number((totalBreakMinutes / 60).toFixed(1)),
+      avgDailyWorkHours: daysPresent > 0 ? Number((totalWorkMinutes / (60 * daysPresent)).toFixed(1)) : 0,
+      totalReelsEdited,
+      totalShootsDone,
+    };
+
+    res.json({
+      success: true,
+      staff: staffUser,
+      month: month || "all",
+      summary,
+      logs,
+    });
+  } catch (err) {
+    console.error("GET /staff-history/:userId error:", err);
     res.status(500).json({ success: false, message: err.message });
   }
 });
