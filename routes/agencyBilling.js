@@ -13,7 +13,7 @@ async function generateInvoiceNumber() {
   return `${prefix}-${String(count + 1).padStart(3, '0')}`;
 }
 
-// ── 1. GET ALL AGENCIES ──
+// ── 1. GET ALL AGENCIES WITH STATS ──
 router.get('/agencies', protect, async (req, res) => {
   try {
     const agencies = await Client.find({
@@ -22,9 +22,54 @@ router.get('/agencies', protect, async (req, res) => {
         { isQuickClient: true },
         { businessName: { $regex: /agency|media|studios|vardhate/i } }
       ]
-    }).select('businessName ownerName mobile email city clientType agencyRates isQuickClient').sort({ businessName: 1 });
+    }).select('businessName ownerName mobile email city clientType agencyRates isQuickClient createdAt').sort({ businessName: 1 });
 
-    res.json({ success: true, agencies });
+    // Aggregate stats for each agency
+    const enrichedAgencies = await Promise.all(agencies.map(async (ag) => {
+      const tasks = await ProductionTask.find({ client: ag._id }).select('videoPrice billingStatus stage serviceType');
+      const totalReels = tasks.length;
+      const unbilledTasks = tasks.filter(t => t.billingStatus === 'unbilled');
+      const unbilledReels = unbilledTasks.length;
+      const unbilledAmount = unbilledTasks.reduce((sum, t) => sum + (Number(t.videoPrice) || 0), 0);
+      const totalAmount = tasks.reduce((sum, t) => sum + (Number(t.videoPrice) || 0), 0);
+
+      return {
+        ...ag.toObject(),
+        totalReels,
+        unbilledReels,
+        unbilledAmount,
+        totalAmount,
+      };
+    }));
+
+    res.json({ success: true, agencies: enrichedAgencies });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── 1B. CREATE NEW AGENCY DIRECTLY ──
+router.post('/agencies', protect, async (req, res) => {
+  try {
+    const { businessName, ownerName, mobile, email, city, agencyRates } = req.body;
+    if (!businessName || !ownerName || !mobile) {
+      return res.status(400).json({ success: false, message: 'Agency Name, Contact Person, and Mobile are required.' });
+    }
+
+    const agency = new Client({
+      businessName,
+      ownerName,
+      mobile,
+      email: email || '',
+      city: city || 'Surat',
+      clientType: 'agency',
+      status: 'active',
+      agencyRates: agencyRates || { defaultShootRate: 0, defaultEditRate: 0, defaultFullRate: 0 },
+      createdBy: req.user._id,
+    });
+
+    await agency.save();
+    res.json({ success: true, agency, message: 'New Agency partner created successfully! 🤝' });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
