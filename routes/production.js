@@ -87,7 +87,18 @@ router.get("/tasks", protect, async (req, res) => {
       .sort({ reelNumber: 1, createdAt: 1 })
       .limit(200);
 
-    res.json({ success: true, tasks });
+    // 🔒 STRICT PRIVACY: Only Admin and Manager can access client phone numbers
+    const isMaster = req.user.role === "admin" || req.user.role === "manager";
+    const sanitizedTasks = tasks.map(task => {
+      const doc = task.toObject();
+      if (!isMaster && doc.client) {
+        doc.client.mobile = "••••••••••";
+        doc.client.ownerName = "";
+      }
+      return doc;
+    });
+
+    res.json({ success: true, tasks: sanitizedTasks });
   } catch (err) {
     console.error("GET /tasks error:", err);
     res.status(500).json({ success: false, message: err.message });
