@@ -8,6 +8,11 @@ const productionTaskSchema = new mongoose.Schema(
       required: true,
     },
     servicePackage: { type: String, default: "" },
+    serviceType:    { type: String, enum: ["full", "only_editing", "only_shooting"], default: "full" },
+    videoPrice:     { type: Number, default: 0 },
+    billingStatus:  { type: String, enum: ["unbilled", "billed", "paid"], default: "unbilled" },
+    billingMonth:   { type: String, default: "" },
+    invoiceId:      { type: mongoose.Schema.Types.ObjectId, ref: "Invoice", default: null },
     title:          { type: String, required: true, trim: true },
     reelNumber:     { type: Number, default: 1 },
     goal: {

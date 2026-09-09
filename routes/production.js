@@ -196,12 +196,32 @@ router.post("/tasks", protect, async (req, res) => {
       finalReelNumber = nextNumber;
     }
 
+    const serviceType = req.body.serviceType || "full";
+    const videoPrice = Number(req.body.videoPrice) || 0;
+    let initialStage = req.body.stage;
+    let scriptStatus = "pending";
+    let shootStatus = "scheduled";
+    let editingStatus = "assigned";
+
+    if (serviceType === "only_editing") {
+      initialStage = req.body.stage || "edit";
+      scriptStatus = "approved";
+      shootStatus = "done";
+    } else if (serviceType === "only_shooting") {
+      initialStage = req.body.stage || "shoot";
+      scriptStatus = "approved";
+    } else {
+      initialStage = req.body.stage || "script";
+    }
+
     const task = new ProductionTask({
       client,
       title,
       goal: goal || "Authority",
       priority: priority || "medium",
       servicePackage: servicePackage || "",
+      serviceType,
+      videoPrice,
       reelNumber: finalReelNumber,
       concept: concept || "",
       hook: hook || "",
@@ -209,12 +229,17 @@ router.post("/tasks", protect, async (req, res) => {
       cta: cta || "",
       writer: writer || req.user._id,
       createdBy: req.user._id,
-      stage: req.body.stage || "script",
+      stage: initialStage,
+      scriptStatus,
+      shootStatus,
+      editingStatus,
       shooter: req.body.shooter || null,
       shootDate: req.body.shootDate || "",
       shootTime: req.body.shootTime || "",
       location: req.body.location || "",
+      rawFootageLink: req.body.rawFootageLink || "",
       editor: req.body.editor || null,
+      editedPreviewLink: req.body.editedPreviewLink || "",
     });
 
     await task.save();
@@ -386,6 +411,13 @@ router.put("/tasks/:id/complete-shoot", protect, async (req, res) => {
     if (completedReels !== undefined) task.completedReels = Number(completedReels);
     if (rawFootageLink) task.rawFootageLink = rawFootageLink;
     if (shootNote) task.shootNote = shootNote;
+
+    // If task is 'only_shooting', completing shoot immediately marks it delivered/completed!
+    if (task.serviceType === "only_shooting") {
+      task.stage = "completed";
+      task.isDelivered = true;
+      task.deliveredAt = new Date();
+    }
 
     await task.save();
 
@@ -668,7 +700,7 @@ router.put("/tasks/:id", protect, async (req, res) => {
       "completedReels", "shootStatus", "rawFootageLink", "shootNote",
       "editor", "editingStatus", "editedPreviewLink", "editorNotes",
       "qcReviewer", "qcNotes", "qcStatus", "clientApprovalStatus",
-      "clientFeedback", "instagramUrl", "clientNotes", "stage"
+      "clientFeedback", "instagramUrl", "clientNotes", "stage", "serviceType", "videoPrice", "billingStatus", "billingMonth"
     ];
 
     updatableFields.forEach(f => {

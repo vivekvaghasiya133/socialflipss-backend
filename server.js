@@ -34,6 +34,7 @@ const runStagesMigration      = require("./utils/migration");
 const productionRoutes   = require("./routes/production");
 const timeTrackingRoutes = require("./routes/timeTracking");
 const agencyConfigRoutes = require("./routes/agencyConfig");
+const agencyBillingRoutes = require("./routes/agencyBilling");
 
 const seedAdmin = require("./middleware/seedAdmin");
 
@@ -90,6 +91,7 @@ app.use("/api/meetings",          meetingRoutes);
 app.use("/api/production",        productionRoutes);
 app.use("/api/time-tracking",     timeTrackingRoutes);
 app.use("/api/agency-config",     agencyConfigRoutes);
+app.use("/api/agency-billing",    agencyBillingRoutes);
 
 app.get("/api/health", (req, res) =>
   res.json({ status:"SocialFlipss Agency OS API ✓", version:"4.0.0", timestamp: new Date() })

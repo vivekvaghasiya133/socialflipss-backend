@@ -23,6 +23,9 @@ const invoiceSchema = new mongoose.Schema(
     invoiceNumber: { type: String, required: true, unique: true },
 
     clientId: { type: mongoose.Schema.Types.ObjectId, ref: "Client", required: false, default: null },
+    invoiceType: { type: String, enum: ["client_retainer", "agency_monthly"], default: "client_retainer" },
+    agencyId: { type: mongoose.Schema.Types.ObjectId, ref: "Client", default: null },
+    taskIds: [{ type: mongoose.Schema.Types.ObjectId, ref: "ProductionTask" }],
 
     // Manual / One-off client details (if clientId is null)
     clientName:     { type: String, default: "" },

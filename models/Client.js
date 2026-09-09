@@ -67,6 +67,12 @@ const clientSchema = new mongoose.Schema(
     // ── Internal notes ───────────────────────────────────────────
     internalNotes: { type: String, default: "" },
 
+    clientType:     { type: String, enum: ["direct", "agency"], default: "direct" },
+    agencyRates:    {
+      defaultShootRate: { type: Number, default: 0 },
+      defaultEditRate:  { type: Number, default: 0 },
+      defaultFullRate:  { type: Number, default: 0 },
+    },
     isQuickClient:  { type: Boolean, default: false },
     quickServiceType: { type: String, default: "Full Management" }, // e.g. "Only Editing", "Shooting + Editing", "Full Management"
 
