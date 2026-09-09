@@ -262,4 +262,26 @@ router.post('/generate-invoice', protect, async (req, res) => {
   }
 });
 
+
+// ── 5. DELETE OR UNTAG AGENCY ──
+router.delete('/agencies/:id', protect, async (req, res) => {
+  try {
+    const { action = 'delete' } = req.query; // 'untag' or 'delete'
+    const agency = await Client.findById(req.params.id);
+    if (!agency) return res.status(404).json({ success: false, message: 'Agency not found' });
+
+    if (action === 'untag') {
+      agency.clientType = 'direct';
+      agency.isQuickClient = false;
+      await agency.save();
+      return res.json({ success: true, message: `Agency tag removed for ${agency.businessName}. Moved to regular clients! 🤝` });
+    }
+
+    await Client.findByIdAndDelete(req.params.id);
+    res.json({ success: true, message: `Agency "${agency.businessName}" deleted successfully! 🗑️` });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 module.exports = router;
