@@ -75,6 +75,34 @@ router.post('/agencies', protect, async (req, res) => {
   }
 });
 
+
+// ── 1C. UPDATE AGENCY DETAILS & DEFAULT RATES ──
+router.put('/agencies/:id', protect, async (req, res) => {
+  try {
+    const { businessName, ownerName, mobile, email, city, agencyRates } = req.body;
+    const agency = await Client.findById(req.params.id);
+    if (!agency) return res.status(404).json({ success: false, message: 'Agency not found' });
+
+    if (businessName) agency.businessName = businessName;
+    if (ownerName) agency.ownerName = ownerName;
+    if (mobile) agency.mobile = mobile;
+    if (email !== undefined) agency.email = email;
+    if (city !== undefined) agency.city = city;
+    if (agencyRates) {
+      agency.agencyRates = {
+        defaultShootRate: Number(agencyRates.defaultShootRate) || 0,
+        defaultEditRate: Number(agencyRates.defaultEditRate) || 0,
+        defaultFullRate: Number(agencyRates.defaultFullRate) || 0,
+      };
+    }
+
+    await agency.save();
+    res.json({ success: true, agency, message: 'Agency details and rates updated successfully! ✨' });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 // ── 2. UPDATE CLIENT TYPE TO AGENCY ──
 router.put('/agencies/:id/convert', protect, async (req, res) => {
   try {
