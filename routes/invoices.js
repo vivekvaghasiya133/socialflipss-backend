@@ -1,6 +1,9 @@
+const whatsappService = require("../services/whatsappService");
+const { generateInvoicePdfBuffer } = require("../services/invoicePdfService");
 const express = require("express");
 const Invoice = require("../models/Invoice");
 const Client  = require("../models/Client");
+const ProductionTask = require("../models/ProductionTask");
 const { protect, authorize } = require("../middleware/auth");
 
 const router = express.Router();
@@ -238,6 +241,12 @@ router.post("/:id/payment", authorize("admin", "manager"), async (req, res) => {
     });
     invoice.paidAmount = parseFloat((invoice.paidAmount + payAmount).toFixed(2));
     await invoice.save(); // pre-save hook updates pendingAmount + paymentStatus
+    if (invoice.paymentStatus === "paid" && invoice.taskIds && invoice.taskIds.length > 0) {
+      await ProductionTask.updateMany(
+        { _id: { $in: invoice.taskIds } },
+        { $set: { billingStatus: "paid" } }
+      );
+    }
 
     const populated = await Invoice.findById(invoice._id)
       .populate("clientId", "businessName")
@@ -271,6 +280,89 @@ router.delete("/:id", authorize("admin"), async (req, res) => {
     res.json({ message: "Invoice deleted" });
   } catch (err) {
     res.status(500).json({ message: "Server error" });
+  }
+});
+
+
+// ── GET /api/invoices/:id/download-pdf ─────────────────────────────
+router.get("/:id/download-pdf", async (req, res) => {
+  try {
+    const invoice = await Invoice.findById(req.params.id)
+      .populate("clientId", "businessName ownerName mobile email city")
+      .populate("agencyId", "businessName ownerName mobile email city");
+    if (!invoice) return res.status(404).json({ message: "Invoice not found" });
+
+    const pdfBuffer = await generateInvoicePdfBuffer(invoice);
+    const filename = `Invoice_${invoice.invoiceNumber || invoice._id}.pdf`;
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Content-Length", pdfBuffer.length);
+    res.send(pdfBuffer);
+  } catch (err) {
+    console.error("PDF generation error:", err);
+    res.status(500).json({ message: "Failed to generate PDF: " + err.message });
+  }
+});
+
+// ── POST /api/invoices/:id/send-whatsapp ──────────────────────────
+router.post("/:id/send-whatsapp", async (req, res) => {
+  try {
+    const invoice = await Invoice.findById(req.params.id)
+      .populate("clientId", "businessName ownerName mobile email city")
+      .populate("agencyId", "businessName ownerName mobile email city");
+    if (!invoice) return res.status(404).json({ success: false, message: "Invoice not found" });
+
+    const clientName = invoice.clientId?.businessName || invoice.clientBusiness || invoice.agencyId?.businessName || "Valued Client";
+    const clientMobile = invoice.clientId?.mobile || invoice.clientMobile || invoice.agencyId?.mobile || "";
+
+    if (!clientMobile || !clientMobile.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "❌ Client mobile number is missing for " + clientName + ". Please add a phone number to send via WhatsApp."
+      });
+    }
+
+    // Generate Invoice PDF Buffer
+    const pdfBuffer = await generateInvoicePdfBuffer(invoice);
+    const filename = `Invoice_${invoice.invoiceNumber || "SocialFlipss"}.pdf`;
+
+    const totalStr = Number(invoice.totalAmount || 0).toLocaleString("en-IN");
+    const paidStr = Number(invoice.paidAmount || 0).toLocaleString("en-IN");
+    const pendingStr = Number(invoice.pendingAmount !== undefined ? invoice.pendingAmount : Math.max(0, (invoice.totalAmount || 0) - (invoice.paidAmount || 0))).toLocaleString("en-IN");
+
+    const captionText =
+      `🧾 *Tax Invoice — SocialFlipss* 🎬\n\n` +
+      `Namaste *${clientName}* 👋\n\n` +
+      `તમારું ઇન્વોઇસ આ સાથે PDF ફોર્મેટમાં મોકલેલ છે:\n\n` +
+      `📄 Invoice No: *${invoice.invoiceNumber}*\n` +
+      (invoice.month ? `🗓️ Billing Month: *${invoice.month}*\n` : "") +
+      `💰 Total Amount: *₹${totalStr}*\n` +
+      `💵 Paid Amount: *₹${paidStr}*\n` +
+      `⚠️ Balance Due: *₹${pendingStr}*\n\n` +
+      `કૃપા કરીને ઉપર દર્શાવેલ PDF ચેક કરી લેશો. પેમેન્ટ વિગતો (UPI / Bank) અંદર સામેલ છે.\n\n` +
+      `Thank you! Flip The Game! 🚀\n` +
+      `– SocialFlipss Agency (8000133106)`;
+
+    const sendResult = await whatsappService.sendWhatsAppDocument(
+      clientMobile,
+      pdfBuffer,
+      filename,
+      captionText
+    );
+
+    res.json({
+      success: true,
+      sent: sendResult.success,
+      phone: sendResult.phone || clientMobile,
+      waLink: sendResult.waLink,
+      message: sendResult.success
+        ? `Invoice PDF successfully delivered to ${clientName} on WhatsApp! 📄📲`
+        : sendResult.message || "WhatsApp Bot is offline. 1-Click fallback link generated.",
+    });
+  } catch (err) {
+    console.error("WhatsApp invoice error:", err);
+    res.status(500).json({ success: false, message: "Server error: " + err.message });
   }
 });
 

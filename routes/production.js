@@ -30,13 +30,52 @@ setTimeout(async () => {
 
 const express = require("express");
 const router  = express.Router();
+const mongoose = require("mongoose");
+const User = require("../models/User");
 const ProductionTask = require("../models/ProductionTask");
+
+async function resolveUserId(val) {
+  if (!val || val === '' || val === 'null' || val === 'undefined') return null;
+  if (mongoose.Types.ObjectId.isValid(val) && String(new mongoose.Types.ObjectId(val)) === String(val)) {
+    return val;
+  }
+  try {
+    const cleanName = String(val).replace(/\(.*\)/, '').trim();
+    if (cleanName) {
+      const matched = await User.findOne({ name: { $regex: new RegExp('^' + cleanName, 'i') } });
+      if (matched) return matched._id;
+    }
+  } catch (e) {}
+  return null;
+}
 const StaffTimeLog   = require("../models/StaffTimeLog");
 const Client         = require("../models/Client");
 const Notification   = require("../models/Notification");
 const { protect }    = require("../middleware/auth");
 
 // Helper to create notifications
+const whatsappService = require("../services/whatsappService");
+
+// Helper to automatically notify via WhatsApp + generate waLink for fallback
+const sendStageWhatsAppNotification = async ({ recipientUserId, messageText }) => {
+  try {
+    if (!recipientUserId) return { sent: false, waLink: "" };
+    const user = await User.findById(recipientUserId).select("name mobile");
+    if (!user || !user.mobile) return { sent: false, waLink: "" };
+
+    const result = await whatsappService.sendWhatsAppMessage(user.mobile, messageText);
+    return {
+      sent: Boolean(result.success),
+      waLink: result.waLink || whatsappService.createWaMeLink(user.mobile, messageText),
+      recipientName: user.name,
+      mobile: user.mobile,
+    };
+  } catch (err) {
+    console.warn("sendStageWhatsAppNotification error:", err.message);
+    return { sent: false, waLink: "" };
+  }
+};
+
 const sendInAppNotification = async ({ recipientId, title, message, link, clientId }) => {
   try {
     if (!recipientId) return;
@@ -80,20 +119,26 @@ router.get("/tasks", protect, async (req, res) => {
 
     const tasks = await ProductionTask.find(filter)
       .populate("client", "businessName ownerName mobile package")
-      .populate("writer", "name avatar")
-      .populate("shooter", "name avatar")
-      .populate("editor", "name avatar")
+      .populate("writer", "name avatar mobile")
+      .populate("shooter", "name avatar mobile")
+      .populate("editor", "name avatar mobile")
       .populate("qcReviewer", "name")
       .sort({ reelNumber: 1, createdAt: 1 })
       .limit(200);
 
-    // 🔒 STRICT PRIVACY: Only Admin and Manager can access client phone numbers
+    // 🔒 STRICT PRIVACY: Only Admin and Manager can access client phone numbers and pricing/billing details
     const isMaster = req.user.role === "admin" || req.user.role === "manager";
     const sanitizedTasks = tasks.map(task => {
       const doc = task.toObject();
-      if (!isMaster && doc.client) {
-        doc.client.mobile = "••••••••••";
-        doc.client.ownerName = "";
+      if (!isMaster) {
+        if (doc.client) {
+          doc.client.mobile = "••••••••••";
+          doc.client.ownerName = "";
+        }
+        delete doc.videoPrice;
+        delete doc.billingStatus;
+        delete doc.billingMonth;
+        delete doc.invoiceId;
       }
       return doc;
     });
@@ -196,8 +241,13 @@ router.post("/tasks", protect, async (req, res) => {
       finalReelNumber = nextNumber;
     }
 
+    const resolvedShooter = await resolveUserId(req.body.shooter);
+    const resolvedEditor = await resolveUserId(req.body.editor);
+    const resolvedWriter = (await resolveUserId(writer)) || req.user._id;
+
+    const isMaster = req.user.role === "admin" || req.user.role === "manager";
     const serviceType = req.body.serviceType || "full";
-    const videoPrice = Number(req.body.videoPrice) || 0;
+    const videoPrice = isMaster ? (Number(req.body.videoPrice) || 0) : 0;
     let initialStage = req.body.stage;
     let scriptStatus = "pending";
     let shootStatus = "scheduled";
@@ -227,18 +277,18 @@ router.post("/tasks", protect, async (req, res) => {
       hook: hook || "",
       bodyText: bodyText || "",
       cta: cta || "",
-      writer: writer || req.user._id,
+      writer: resolvedWriter,
       createdBy: req.user._id,
       stage: initialStage,
       scriptStatus,
       shootStatus,
       editingStatus,
-      shooter: req.body.shooter || null,
+      shooter: resolvedShooter,
       shootDate: req.body.shootDate || "",
       shootTime: req.body.shootTime || "",
       location: req.body.location || "",
       rawFootageLink: req.body.rawFootageLink || "",
-      editor: req.body.editor || null,
+      editor: resolvedEditor,
       editedPreviewLink: req.body.editedPreviewLink || "",
     });
 
@@ -249,7 +299,18 @@ router.post("/tasks", protect, async (req, res) => {
       .populate("shooter", "name")
       .populate("editor", "name");
 
-    res.json({ success: true, task: populated });
+    const doc = populated.toObject();
+    if (!isMaster) {
+      if (doc.client) {
+        doc.client.mobile = "••••••••••";
+        doc.client.ownerName = "";
+      }
+      delete doc.videoPrice;
+      delete doc.billingStatus;
+      delete doc.billingMonth;
+      delete doc.invoiceId;
+    }
+    res.json({ success: true, task: doc });
   } catch (err) {
     console.error("POST /tasks error:", err);
     res.status(500).json({ success: false, message: err.message });
@@ -303,10 +364,29 @@ router.put("/tasks/batch-pass-to-shoot", protect, async (req, res) => {
       clientId: tasks[0]?.client?._id,
     });
 
+    const waBatchText =
+      `🎥 *New Shoot Assignment — SocialFlipss* 🎬\n\n` +
+      `Namaste 👋\n` +
+      `તમને નવા શૂટિંગની જવાબદારી સોંપવામાં આવી છે:\n\n` +
+      `🏢 Client: *${clientName}*\n` +
+      `🎬 Reels: *${tasks.length} Reels*\n` +
+      `📅 Date: *${shootDate}*\n` +
+      `⏰ Time: *${shootTime || "03:00 PM"}*\n` +
+      `📍 Location: *${location || "Client Store"}*\n` +
+      `🎯 Target: *${targetReels || tasks.length} Reels*\n` +
+      (shootNote ? `📝 Note: ${shootNote}\n` : "") +
+      `\nPlease reach on time. Flip The Game! 🚀`;
+
+    const waResult = await sendStageWhatsAppNotification({
+      recipientUserId: shooter,
+      messageText: waBatchText,
+    });
+
     res.json({
       success: true,
       message: tasks.length + " Scripts passed and assigned to Shoot successfully! 🎬",
       count: tasks.length,
+      whatsapp: waResult,
     });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -349,7 +429,31 @@ router.put("/tasks/:id/pass-script-to-shoot", protect, async (req, res) => {
       clientId: task.client?._id,
     });
 
-    res.json({ success: true, message: "Script passed and Shoot Person assigned! 🎬", task });
+    const clientName = task.client?.businessName || "Client";
+    const waText =
+      `🎥 *New Shoot Assignment — SocialFlipss* 🎬\n\n` +
+      `Namaste 👋\n` +
+      `તમને નવા શૂટિંગની જવાબદારી સોંપવામાં આવી છે:\n\n` +
+      `🏢 Client: *${clientName}*\n` +
+      `🎞️ Reel: *#${task.reelNumber} — ${task.title}*\n` +
+      `📅 Date: *${task.shootDate}*\n` +
+      `⏰ Time: *${task.shootTime}*\n` +
+      `📍 Location: *${task.location}*\n` +
+      `🎯 Target: *${task.targetReels} Reels*\n` +
+      (task.shootNote ? `📝 Note: ${task.shootNote}\n` : "") +
+      `\nPlease reach on time. Flip The Game! 🚀`;
+
+    const waResult = await sendStageWhatsAppNotification({
+      recipientUserId: shooter,
+      messageText: waText,
+    });
+
+    res.json({
+      success: true,
+      message: "Script passed and Shoot Person assigned! 🎬",
+      task,
+      whatsapp: waResult
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -492,6 +596,22 @@ router.put("/tasks/batch-handoff-to-edit", protect, async (req, res) => {
           message: "Raw footage is ready for Reel #" + task.reelNumber + " (" + (task.title || "Reel") + "). Open Production Hub to edit.",
           clientId: task.client?._id,
         });
+
+        const editWaText =
+          `✂️ *New Video Editing Assigned — SocialFlipss* 🎬\n\n` +
+          `Namaste 👋\n` +
+          `તમને નવી રીલ એડિટિંગનું કામ સોંપવામાં આવ્યું છે:\n\n` +
+          `🏢 Client: *${task.client?.businessName || "Client"}*\n` +
+          `🎞️ Reel: *#${task.reelNumber} — ${task.title || "Reel"}*\n` +
+          `🔗 Raw Footage Link: ${task.rawFootageLink}\n` +
+          (task.editorDeadline ? `⏳ Deadline: *${new Date(task.editorDeadline).toLocaleDateString("en-IN")}*\n` : "") +
+          (task.editorNotes ? `📝 Notes: ${task.editorNotes}\n` : "") +
+          `\nLet's make it viral! 🚀`;
+
+        await sendStageWhatsAppNotification({
+          recipientUserId: item.editor,
+          messageText: editWaText,
+        });
       } catch (notifErr) {
         console.error("Notification error:", notifErr);
       }
@@ -550,7 +670,28 @@ router.put("/tasks/:id/handoff-to-edit", protect, async (req, res) => {
       clientId: task.client?._id,
     });
 
-    res.json({ success: true, message: "Raw data verified & handed over to Video Editor! ✂️", task });
+    const editWaText =
+      `✂️ *New Video Editing Assigned — SocialFlipss* 🎬\n\n` +
+      `Namaste 👋\n` +
+      `તમને નવી રીલ એડિટિંગનું કામ સોંપવામાં આવ્યું છે:\n\n` +
+      `🏢 Client: *${task.client?.businessName || "Client"}*\n` +
+      `🎞️ Reel: *#${task.reelNumber} — ${task.title}*\n` +
+      `🔗 Raw Footage Link: ${task.rawFootageLink}\n` +
+      (task.editorDeadline ? `⏳ Deadline: *${new Date(task.editorDeadline).toLocaleDateString("en-IN")}*\n` : "") +
+      (task.editorNotes ? `📝 Notes: ${task.editorNotes}\n` : "") +
+      `\nLet's make it viral! 🚀`;
+
+    const waResult = await sendStageWhatsAppNotification({
+      recipientUserId: finalEditor,
+      messageText: editWaText,
+    });
+
+    res.json({
+      success: true,
+      message: "Raw data verified & handed over to Video Editor! ✂️",
+      task,
+      whatsapp: waResult
+    });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -594,7 +735,22 @@ router.put("/tasks/:id/submit-edit-to-qc", protect, async (req, res) => {
       clientId: task.client?._id,
     });
 
-    res.json({ success: true, message: "Edited reel submitted to QC! Score credited to editor. 🎉", task });
+    const submitWaText =
+      `🔍 *Reel Ready for QC Review — SocialFlipss* 🎬\n\n` +
+      `Namaste 👋\n` +
+      `એડિટરે નવી રીલ QC માટે સબમિટ કરી છે:\n\n` +
+      `🏢 Client: *${task.client?.businessName || "Client"}*\n` +
+      `🎞️ Reel: *#${task.reelNumber} — ${task.title || "Reel"}*\n` +
+      `🔗 Preview: ${task.editedPreviewLink}\n` +
+      (task.editorNotes ? `📝 Note: ${task.editorNotes}\n` : "") +
+      `\nકૃપા કરીને Production Hub માં QC ચેક કરો. 🚀`;
+
+    const waResult = await sendStageWhatsAppNotification({
+      recipientUserId: task.createdBy || req.user._id,
+      messageText: submitWaText,
+    });
+
+    res.json({ success: true, message: "Edited reel submitted to QC! Score credited to editor. 🎉", task, whatsapp: waResult });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -627,7 +783,21 @@ router.put("/tasks/:id/qc-decision", protect, async (req, res) => {
         clientId: task.client?._id,
       });
 
-      return res.json({ success: true, message: "Revisions sent back to Video Editor! 🔄", task });
+      const qcWaText =
+        `⚠️ *QC Changes Requested — SocialFlipss* 🎬\n\n` +
+        `Namaste 👋\n` +
+        `રીલ એડિટિંગમાં સુધારા (changes) આવ્યા છે:\n\n` +
+        `🏢 Client: *${task.client?.businessName || "Client"}*\n` +
+        `🎞️ Reel: *#${task.reelNumber} — ${task.title || "Reel"}*\n` +
+        `📝 QC Feedback: *${task.qcNotes}*\n\n` +
+        `કૃપા કરીને ચેક કરીને સુધારીને ફરી સબમિટ કરો. 🚀`;
+
+      const waResult = await sendStageWhatsAppNotification({
+        recipientUserId: task.editor,
+        messageText: qcWaText,
+      });
+
+      return res.json({ success: true, message: "Revisions sent back to Video Editor! 🔄", task, whatsapp: waResult });
     } else {
       task.stage = "client_approval";
       task.qcStatus = "approved";
@@ -703,8 +873,12 @@ router.put("/tasks/:id", protect, async (req, res) => {
       "clientFeedback", "instagramUrl", "clientNotes", "stage", "serviceType", "videoPrice", "billingStatus", "billingMonth"
     ];
 
+    const isMaster = req.user.role === "admin" || req.user.role === "manager";
     updatableFields.forEach(f => {
       if (req.body[f] !== undefined) {
+        if (!isMaster && (f === "videoPrice" || f === "billingStatus" || f === "billingMonth" || f === "invoiceId")) {
+          return; // Skip pricing/billing updates for non-master
+        }
         task[f] = req.body[f];
       }
     });
@@ -716,7 +890,6 @@ router.put("/tasks/:id", protect, async (req, res) => {
 
     await task.save();
 
-    const isMaster = req.user.role === "admin" || req.user.role === "manager";
     const populated = await ProductionTask.findById(task._id)
       .populate("client", "businessName mobile package")
       .populate("writer", "name role")
@@ -725,9 +898,15 @@ router.put("/tasks/:id", protect, async (req, res) => {
       .populate("qcReviewer", "name role");
 
     const doc = populated.toObject();
-    if (!isMaster && doc.client) {
-      doc.client.mobile = "••••••••••";
-      doc.client.ownerName = "";
+    if (!isMaster) {
+      if (doc.client) {
+        doc.client.mobile = "••••••••••";
+        doc.client.ownerName = "";
+      }
+      delete doc.videoPrice;
+      delete doc.billingStatus;
+      delete doc.billingMonth;
+      delete doc.invoiceId;
     }
 
     res.json({ success: true, task: doc, message: "Task updated successfully!" });
@@ -745,10 +924,9 @@ router.delete("/tasks/:id", protect, async (req, res) => {
       return res.status(404).json({ success: false, message: "Task not found" });
     }
 
-    const isMaster = req.user.role === "admin" || req.user.role === "manager";
-    const isCreator = task.createdBy && String(task.createdBy) === String(req.user._id);
-    if (!isMaster && !isCreator) {
-      return res.status(403).json({ success: false, message: "Access Denied: Only Admin, Manager, or Creator can delete this task." });
+    // 🔒 STRICT SECURITY: Only Admin can delete production reel tasks!
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ success: false, message: "Access Denied: Only Admin can delete production reel tasks." });
     }
 
     const clientId = task.client;

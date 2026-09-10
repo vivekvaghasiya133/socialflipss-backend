@@ -13,6 +13,14 @@ async function generateInvoiceNumber() {
   return `${prefix}-${String(count + 1).padStart(3, '0')}`;
 }
 
+// ── RESTRICT ALL AGENCY BILLING ROUTES TO ADMIN & MANAGER ──
+router.use(protect, (req, res, next) => {
+  if (req.user?.role !== "admin" && req.user?.role !== "manager") {
+    return res.status(403).json({ success: false, message: "Access denied: Admin or Manager only" });
+  }
+  next();
+});
+
 // ── 1. GET ALL AGENCIES WITH STATS ──
 router.get('/agencies', protect, async (req, res) => {
   try {
@@ -307,6 +315,247 @@ router.delete('/agencies/:id', protect, async (req, res) => {
 
     await Client.findByIdAndDelete(req.params.id);
     res.json({ success: true, message: `Agency "${agency.businessName}" deleted successfully! 🗑️` });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+
+// ── 6. GET ALL AGENCY INVOICES WITH STATS & LEDGER ──
+router.get("/invoices", protect, async (req, res) => {
+  try {
+    const { agencyId, paymentStatus } = req.query;
+    const filter = {
+      $or: [
+        { invoiceType: "agency_monthly" },
+        { agencyId: { $ne: null } }
+      ]
+    };
+
+    if (agencyId) {
+      filter.$and = [
+        { $or: [{ agencyId: agencyId }, { clientId: agencyId }] }
+      ];
+    }
+
+    if (paymentStatus === "pending") {
+      filter.paymentStatus = { $in: ["pending", "partial"] };
+    } else if (paymentStatus === "paid") {
+      filter.paymentStatus = "paid";
+    } else if (paymentStatus === "partial") {
+      filter.paymentStatus = "partial";
+    }
+
+    const invoices = await Invoice.find(filter)
+      .populate("agencyId", "businessName ownerName mobile email city")
+      .populate("clientId", "businessName ownerName mobile email city")
+      .populate("createdBy", "name")
+      .populate("payments.addedBy", "name")
+      .sort({ createdAt: -1 });
+
+    // Aggregate statistics across all agency invoices (or filtered agency)
+    const statsFilter = {
+      $or: [
+        { invoiceType: "agency_monthly" },
+        { agencyId: { $ne: null } }
+      ]
+    };
+    if (agencyId) {
+      statsFilter.$and = [
+        { $or: [{ agencyId: agencyId }, { clientId: agencyId }] }
+      ];
+    }
+    const allMatching = await Invoice.find(statsFilter).select("totalAmount paidAmount pendingAmount paymentStatus");
+
+    let totalInvoiced = 0;
+    let totalPaid = 0;
+    let totalPending = 0;
+    let countPending = 0;
+    let countPaid = 0;
+
+    allMatching.forEach(inv => {
+      totalInvoiced += (Number(inv.totalAmount) || 0);
+      totalPaid += (Number(inv.paidAmount) || 0);
+      const pend = (Number(inv.pendingAmount) || 0);
+      totalPending += pend;
+      if (inv.paymentStatus === "paid") {
+        countPaid++;
+      } else {
+        countPending++;
+      }
+    });
+
+    res.json({
+      success: true,
+      invoices,
+      stats: {
+        totalInvoiced,
+        totalPaid,
+        totalPending,
+        countPending,
+        countPaid,
+        totalInvoices: allMatching.length
+      }
+    });
+  } catch (err) {
+    console.error("get agency invoices error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── 7. RECORD PAYMENT FOR AGENCY INVOICE ──
+router.post("/invoices/:id/payment", protect, async (req, res) => {
+  try {
+    const { amount, method = "upi", note = "", date, collectedBy = "vivek", collectedByCustom = "" } = req.body;
+    const invoice = await Invoice.findById(req.params.id);
+    if (!invoice) return res.status(404).json({ success: false, message: "Invoice not found" });
+
+    const payAmount = parseFloat(amount);
+    if (isNaN(payAmount) || payAmount <= 0) {
+      return res.status(400).json({ success: false, message: "Please enter a valid amount greater than 0" });
+    }
+
+    if (invoice.paidAmount + payAmount > invoice.totalAmount + 0.01) {
+      return res.status(400).json({
+        success: false,
+        message: `Amount exceeds pending dues. Maximum payable is ₹${invoice.pendingAmount}`
+      });
+    }
+
+    invoice.payments.push({
+      amount: payAmount,
+      method,
+      note: note || "",
+      date: date || new Date(),
+      addedBy: req.user._id,
+      collectedBy,
+      collectedByCustom
+    });
+
+    invoice.paidAmount = parseFloat((invoice.paidAmount + payAmount).toFixed(2));
+    await invoice.save();
+
+    // If fully paid, mark all linked ProductionTasks as paid
+    if (invoice.paymentStatus === "paid" && invoice.taskIds && invoice.taskIds.length > 0) {
+      await ProductionTask.updateMany(
+        { _id: { $in: invoice.taskIds } },
+        { $set: { billingStatus: "paid" } }
+      );
+    }
+
+    const populated = await Invoice.findById(invoice._id)
+      .populate("agencyId", "businessName ownerName mobile email city")
+      .populate("clientId", "businessName ownerName mobile email city")
+      .populate("createdBy", "name")
+      .populate("payments.addedBy", "name");
+
+    res.json({
+      success: true,
+      message: `Payment of ₹${payAmount.toLocaleString("en-IN")} recorded successfully! 💰`,
+      invoice: populated
+    });
+  } catch (err) {
+    console.error("record payment error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── 8. 1-CLICK MARK AS FULLY PAID & CLEAR ──
+router.put("/invoices/:id/clear", protect, async (req, res) => {
+  try {
+    const invoice = await Invoice.findById(req.params.id);
+    if (!invoice) return res.status(404).json({ success: false, message: "Invoice not found" });
+
+    const remaining = Number(invoice.pendingAmount) || Math.max(0, invoice.totalAmount - invoice.paidAmount);
+    if (remaining > 0) {
+      invoice.payments.push({
+        amount: remaining,
+        method: req.body.method || "bank",
+        note: req.body.note || "Full balance cleared by Admin",
+        date: req.body.date || new Date(),
+        addedBy: req.user._id,
+        collectedBy: req.body.collectedBy || "vivek",
+        collectedByCustom: ""
+      });
+      invoice.paidAmount = invoice.totalAmount;
+    }
+
+    invoice.pendingAmount = 0;
+    invoice.paymentStatus = "paid";
+    await invoice.save();
+
+    if (invoice.taskIds && invoice.taskIds.length > 0) {
+      await ProductionTask.updateMany(
+        { _id: { $in: invoice.taskIds } },
+        { $set: { billingStatus: "paid" } }
+      );
+    }
+
+    const populated = await Invoice.findById(invoice._id)
+      .populate("agencyId", "businessName ownerName mobile email city")
+      .populate("clientId", "businessName ownerName mobile email city")
+      .populate("createdBy", "name")
+      .populate("payments.addedBy", "name");
+
+    res.json({
+      success: true,
+      message: `Invoice ${invoice.invoiceNumber} is now 100% CLEAR! 🎉`,
+      invoice: populated
+    });
+  } catch (err) {
+    console.error("clear invoice error:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── 9. REMOVE A PAYMENT RECORD ──
+router.delete("/invoices/:id/payment/:payId", protect, async (req, res) => {
+  try {
+    const invoice = await Invoice.findById(req.params.id);
+    if (!invoice) return res.status(404).json({ success: false, message: "Invoice not found" });
+
+    const payment = invoice.payments.id(req.params.payId);
+    if (!payment) return res.status(404).json({ success: false, message: "Payment not found" });
+
+    invoice.paidAmount = Math.max(0, parseFloat((invoice.paidAmount - payment.amount).toFixed(2)));
+    invoice.payments.pull(req.params.payId);
+    await invoice.save();
+
+    if (invoice.paymentStatus !== "paid" && invoice.taskIds && invoice.taskIds.length > 0) {
+      await ProductionTask.updateMany(
+        { _id: { $in: invoice.taskIds } },
+        { $set: { billingStatus: "billed" } }
+      );
+    }
+
+    const populated = await Invoice.findById(invoice._id)
+      .populate("agencyId", "businessName ownerName mobile email city")
+      .populate("clientId", "businessName ownerName mobile email city")
+      .populate("createdBy", "name")
+      .populate("payments.addedBy", "name");
+
+    res.json({ success: true, message: "Payment record removed!", invoice: populated });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── 10. DELETE INVOICE & REVERT TASKS TO UNBILLED ──
+router.delete("/invoices/:id", protect, async (req, res) => {
+  try {
+    const invoice = await Invoice.findById(req.params.id);
+    if (!invoice) return res.status(404).json({ success: false, message: "Invoice not found" });
+
+    // Restore linked tasks back to unbilled
+    if (invoice.taskIds && invoice.taskIds.length > 0) {
+      await ProductionTask.updateMany(
+        { _id: { $in: invoice.taskIds } },
+        { $set: { billingStatus: "unbilled", invoiceId: null, billingMonth: "" } }
+      );
+    }
+
+    await Invoice.findByIdAndDelete(req.params.id);
+    res.json({ success: true, message: `Invoice ${invoice.invoiceNumber} deleted and tasks restored to unbilled! 🗑️` });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

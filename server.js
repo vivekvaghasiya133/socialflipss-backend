@@ -35,6 +35,8 @@ const productionRoutes   = require("./routes/production");
 const timeTrackingRoutes = require("./routes/timeTracking");
 const agencyConfigRoutes = require("./routes/agencyConfig");
 const agencyBillingRoutes = require("./routes/agencyBilling");
+const whatsappBotRoutes = require("./routes/whatsappBot");
+const whatsappService = require("./services/whatsappService");
 
 const seedAdmin = require("./middleware/seedAdmin");
 
@@ -92,6 +94,7 @@ app.use("/api/production",        productionRoutes);
 app.use("/api/time-tracking",     timeTrackingRoutes);
 app.use("/api/agency-config",     agencyConfigRoutes);
 app.use("/api/agency-billing",    agencyBillingRoutes);
+app.use("/api/whatsapp-bot",     whatsappBotRoutes);
 
 app.get("/api/health", (req, res) =>
   res.json({ status:"SocialFlipss Agency OS API ✓", version:"4.0.0", timestamp: new Date() })
@@ -100,7 +103,10 @@ app.get("/api/health", (req, res) =>
 const PORT = process.env.PORT || 5000;
 
 // 1. Immediately bind to 0.0.0.0 so Render detects open port in 1s without timing out
-const server = app.listen(PORT, "0.0.0.0", () => {
+const server = // Auto-initialize WhatsApp Service
+whatsappService.connect().catch((e) => console.log("WhatsApp auto-init:", e.message));
+
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`✓ SocialFlipss Server listening on port ${PORT} (0.0.0.0)`);
 });
 

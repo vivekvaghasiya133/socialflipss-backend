@@ -119,7 +119,7 @@ router.get("/", async (req, res) => {
       .populate("createdBy", "name")
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit).limit(Number(limit))
-      .select("businessName ownerName mobile city industry status package onboardingDate assignedTo createdBy");
+      .select("businessName ownerName mobile city industry status package onboardingDate assignedTo createdBy clientType agencyRates isQuickClient");
     res.json({ clients, total, page: Number(page), pages: Math.ceil(total / limit) });
   } catch (err) {
     res.status(500).json({ message: "Server error" });
